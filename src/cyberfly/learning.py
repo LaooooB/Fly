@@ -147,6 +147,24 @@ class FastValenceLearner:
 
         base = f"{food}|{wall}|{need}"
 
+        mate_strength = max(
+            getattr(sensors, "mate_visual", 0.0),
+            getattr(sensors, "mate_left", 0.0),
+            getattr(sensors, "mate_right", 0.0),
+        )
+        if mate_strength >= 0.07:
+            mate_delta = (
+                getattr(sensors, "mate_right", 0.0)
+                - getattr(sensors, "mate_left", 0.0)
+            )
+            if mate_delta > 0.06:
+                mate = "MR"
+            elif mate_delta < -0.06:
+                mate = "ML"
+            else:
+                mate = "MC"
+            base = f"{base}|{mate}"
+
         game_strength = max(
             getattr(sensors, "game_odor", 0.0),
             getattr(sensors, "game_left", 0.0),
