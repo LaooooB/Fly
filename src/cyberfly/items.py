@@ -18,6 +18,12 @@ ITEM_CATALOG: tuple[PlaceableItem, ...] = (
         category="食物",
         keywords=("bread", "food", "吃", "食物"),
     ),
+    PlaceableItem(
+        item_id="game",
+        name="游戏机",
+        category="娱乐",
+        keywords=("game", "游戏", "玩", "娱乐", "快乐", "多巴胺"),
+    ),
 )
 
 

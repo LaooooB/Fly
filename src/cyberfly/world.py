@@ -35,6 +35,9 @@ class Sensors:
     loom_right: float = 0.0
     memory_food_left: float = 0.0
     memory_food_right: float = 0.0
+    game_odor: float = 0.0
+    game_left: float = 0.0
+    game_right: float = 0.0
 
 
 @dataclass
@@ -53,9 +56,14 @@ class PersonState:
     food_eaten: int = 0
     reward_events: int = 0
     pain_events: int = 0
+    mood: float = 0.50
+    games_played: int = 0
+    starvation_seconds: float = 0.0
+    alive: bool = True
     walk_phase: float = 0.0
     speed: float = 0.0
     last_food_distance: float | None = None
+    game_cooldown: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +81,10 @@ class PersonState:
             "food_eaten": int(self.food_eaten),
             "reward_events": int(self.reward_events),
             "pain_events": int(self.pain_events),
+            "mood": round(float(self.mood), 6),
+            "games_played": int(self.games_played),
+            "starvation_seconds": round(float(self.starvation_seconds), 4),
+            "alive": bool(self.alive),
         }
 
     @classmethod
@@ -186,6 +198,38 @@ class PersonState:
                     )
                 ),
             ),
+            mood=_clamp(
+                float(
+                    raw.get(
+                        "mood",
+                        0.50,
+                    )
+                )
+            ),
+            games_played=max(
+                0,
+                int(
+                    raw.get(
+                        "games_played",
+                        0,
+                    )
+                ),
+            ),
+            starvation_seconds=max(
+                0.0,
+                float(
+                    raw.get(
+                        "starvation_seconds",
+                        0.0,
+                    )
+                ),
+            ),
+            alive=bool(
+                raw.get(
+                    "alive",
+                    True,
+                )
+            ),
         )
 
 
@@ -206,6 +250,11 @@ class PersonView:
     food_eaten: int
     reward_events: int
     pain_events: int
+    mood: float
+    games_played: int
+    starvation_seconds: float
+    starvation_remaining: float
+    alive: bool
     walk_phase: float
     speed: float
 
@@ -226,6 +275,9 @@ class CyberFlyWorld:
         self.state = snapshot or PetSnapshot()
 
         self.food: list[
+            tuple[float, float]
+        ] = []
+        self.games: list[
             tuple[float, float]
         ] = []
         self.people: dict[
@@ -575,10 +627,40 @@ class CyberFlyWorld:
             pain_events=(
                 person.pain_events
             ),
+            mood=person.mood,
+            games_played=(
+                person.games_played
+            ),
+            starvation_seconds=(
+                person.starvation_seconds
+            ),
+            starvation_remaining=max(
+                0.0,
+                60.0
+                - person.starvation_seconds,
+            ),
+            alive=person.alive,
             walk_phase=(
                 person.walk_phase
             ),
             speed=person.speed,
+        )
+
+    def living_ids(
+        self,
+    ) -> list[str]:
+        return [
+            pid
+            for pid, person
+            in self.people.items()
+            if person.alive
+        ]
+
+    def living_count(
+        self,
+    ) -> int:
+        return len(
+            self.living_ids()
         )
 
     def place_food(
@@ -614,6 +696,64 @@ class CyberFlyWorld:
             )
 
         return point
+
+    def place_game(
+        self,
+        x: float,
+        y: float,
+    ) -> tuple[float, float]:
+        margin = 34.0
+        px = max(
+            margin,
+            min(
+                self.width - margin,
+                float(x),
+            ),
+        )
+        py = max(
+            margin,
+            min(
+                self.height - margin,
+                float(y),
+            ),
+        )
+        point = (px, py)
+        self.games.append(point)
+        return point
+
+    def _nearest_game(
+        self,
+        person: PersonState,
+    ) -> tuple[float, float] | None:
+        if not self.games:
+            return None
+        return min(
+            self.games,
+            key=lambda point: (
+                point[0] - person.x
+            ) ** 2
+            + (
+                point[1] - person.y
+            ) ** 2,
+        )
+
+    def nearest_game_distance(
+        self,
+        person_id: str | None = None,
+    ) -> float | None:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+        nearest = self._nearest_game(
+            person
+        )
+        if nearest is None:
+            return None
+        return math.hypot(
+            nearest[0] - person.x,
+            nearest[1] - person.y,
+        )
 
     def _nearest_food(
         self,
@@ -719,6 +859,7 @@ class CyberFlyWorld:
             if (
                 other.person_id
                 != person.person_id
+                and other.alive
             )
         ]
         if not others:
@@ -864,6 +1005,47 @@ class CyberFlyWorld:
                 ),
             )
 
+        nearest_game = self._nearest_game(
+            person
+        )
+        if (
+            nearest_game
+            and person.alive
+        ):
+            dist, left, right = (
+                self._relative_side(
+                    person,
+                    nearest_game[0],
+                    nearest_game[1],
+                )
+            )
+            survival_gate = max(
+                0.12,
+                1.0
+                - person.hunger * 0.85,
+            )
+            mood_need = (
+                0.40
+                + 0.60
+                * (1.0 - person.mood)
+            )
+            sensors.game_odor = _clamp(
+                (
+                    1.0
+                    - dist / 380.0
+                )
+                * survival_gate
+                * mood_need
+            )
+            sensors.game_left = (
+                sensors.game_odor
+                * left
+            )
+            sensors.game_right = (
+                sensors.game_odor
+                * right
+            )
+
         if (
             sensors.food_odor < 0.08
             and self.state.known_food_spots
@@ -917,6 +1099,9 @@ class CyberFlyWorld:
             "loom_right",
             "memory_food_left",
             "memory_food_right",
+            "game_odor",
+            "game_left",
+            "game_right",
         )
         result = Sensors()
 
@@ -1004,7 +1189,7 @@ class CyberFlyWorld:
 
         signal = self._signal(pid)
         signal["pain"] = min(
-            1.5,
+            2.0,
             signal["pain"]
             + amount,
         )
@@ -1085,6 +1270,10 @@ class CyberFlyWorld:
         for person in (
             self.people.values()
         ):
+            if not person.alive:
+                person.speed = 0.0
+                continue
+
             person.age_seconds += dt
             person.hunger = _clamp(
                 person.hunger
@@ -1112,6 +1301,20 @@ class CyberFlyWorld:
                 person.pain
                 - 0.70 * dt
             )
+            person.mood = _clamp(
+                person.mood
+                - 0.0012 * dt
+            )
+            person.game_cooldown = max(
+                0.0,
+                person.game_cooldown
+                - dt,
+            )
+
+            if person.hunger >= 0.999:
+                person.starvation_seconds += dt
+            else:
+                person.starvation_seconds = 0.0
 
             current_distance = (
                 self.nearest_food_distance(
@@ -1160,29 +1363,65 @@ class CyberFlyWorld:
                 )
                 / 0.50
             )
+            critical = _clamp(
+                (
+                    person.hunger
+                    - 0.85
+                )
+                / 0.15
+            )
             if hunger_pain > 0.0:
                 signal = self._signal(
                     person.person_id
                 )
+                pressure = (
+                    hunger_pain * 0.60
+                    + critical * 1.80
+                )
+                if (
+                    person.starvation_seconds
+                    > 0.0
+                ):
+                    starvation_progress = _clamp(
+                        person.starvation_seconds
+                        / 60.0
+                    )
+                    pressure += (
+                        2.20
+                        * (
+                            0.45
+                            + 0.55
+                            * starvation_progress
+                        )
+                    )
                 signal["pain"] = min(
-                    1.5,
+                    2.0,
                     signal["pain"]
-                    + hunger_pain
-                    * dt
-                    * 0.60,
+                    + pressure * dt,
                 )
                 person.pain = max(
                     person.pain,
                     hunger_pain,
+                    critical,
                 )
                 signal["reasons"].append(
                     "pain:hunger"
                 )
+                if (
+                    person.starvation_seconds
+                    > 0.0
+                ):
+                    signal["reasons"].append(
+                        "pain:starvation"
+                    )
 
         for person in list(
             self.people.values()
         ):
-            if person.hunger <= 0.18:
+            if (
+                not person.alive
+                or person.hunger <= 0.18
+            ):
                 continue
 
             for i, (fx, fy) in enumerate(
@@ -1206,10 +1445,25 @@ class CyberFlyWorld:
                     fx,
                     fy,
                 )
+                rescue = (
+                    person.starvation_seconds
+                    > 0.0
+                    or person.hunger
+                    >= 0.95
+                )
+                person.starvation_seconds = 0.0
                 self.pulse_dopamine(
                     person.person_id,
-                    1.0,
-                    "ate_bread",
+                    (
+                        1.45
+                        if rescue
+                        else 1.0
+                    ),
+                    (
+                        "survival_food"
+                        if rescue
+                        else "ate_bread"
+                    ),
                     count_event=True,
                 )
                 events.append(
@@ -1236,6 +1490,91 @@ class CyberFlyWorld:
                         )
                     )
                 break
+
+        for person in list(
+            self.people.values()
+        ):
+            if (
+                not person.alive
+                or person.game_cooldown
+                > 0.0
+            ):
+                continue
+
+            nearest_game = self._nearest_game(
+                person
+            )
+            if (
+                nearest_game is None
+                or math.hypot(
+                    nearest_game[0]
+                    - person.x,
+                    nearest_game[1]
+                    - person.y,
+                )
+                > 34.0
+            ):
+                continue
+
+            person.game_cooldown = 4.0
+            person.games_played += 1
+            person.mood = _clamp(
+                person.mood + 0.42
+            )
+            self.pulse_dopamine(
+                person.person_id,
+                1.15,
+                "played_game",
+                count_event=True,
+            )
+            events.append(
+                {
+                    "kind": "played_game",
+                    "person_id": (
+                        person.person_id
+                    ),
+                    "gender": (
+                        person.gender
+                    ),
+                    "mood_after": (
+                        person.mood
+                    ),
+                }
+            )
+
+        for person in (
+            self.people.values()
+        ):
+            if (
+                not person.alive
+                or person.hunger < 0.999
+                or person.starvation_seconds
+                < 60.0
+            ):
+                continue
+
+            person.alive = False
+            person.speed = 0.0
+            person.pain = 1.0
+            person.dopamine = 0.0
+            self.pulse_pain(
+                person.person_id,
+                2.0,
+                "death_starvation",
+                count_event=True,
+            )
+            events.append(
+                {
+                    "kind": "died",
+                    "person_id": (
+                        person.person_id
+                    ),
+                    "gender": (
+                        person.gender
+                    ),
+                    "reason": "starvation",
+                }
+            )
 
         self.sync_snapshot()
         return events
@@ -1265,6 +1604,9 @@ class CyberFlyWorld:
             person_id
         )
         person = self.people[pid]
+        if not person.alive:
+            person.speed = 0.0
+            return False
 
         energy_scale = (
             1.0
@@ -1395,6 +1737,9 @@ class CyberFlyWorld:
             person_id
         )
         person = self.people[pid]
+        if not person.alive:
+            person.speed = 0.0
+            return
         person.fatigue = _clamp(
             person.fatigue
             - 0.06 * dt
@@ -1409,7 +1754,7 @@ class CyberFlyWorld:
         str,
         float,
     ] | None:
-        ids = self.person_ids()
+        ids = self.living_ids()
         if len(ids) < 2:
             return None
 
@@ -1449,9 +1794,12 @@ class CyberFlyWorld:
         float,
         float,
     ]:
-        people = list(
-            self.people.values()
-        )
+        people = [
+            person
+            for person
+            in self.people.values()
+            if person.alive
+        ]
         n = max(
             1,
             len(people),

@@ -790,6 +790,8 @@ def _draw_person(
         view.walk_phase,
         moving,
     )
+    if not view.alive:
+        base.set_alpha(105)
 
     if (
         math.cos(
@@ -859,6 +861,34 @@ def _draw_person(
             center=center
         ),
     )
+
+    if not view.alive:
+        pygame.draw.line(
+            screen,
+            DANGER,
+            (
+                center[0] - 20,
+                center[1] - 24,
+            ),
+            (
+                center[0] + 20,
+                center[1] + 24,
+            ),
+            5,
+        )
+        pygame.draw.line(
+            screen,
+            DANGER,
+            (
+                center[0] + 20,
+                center[1] - 24,
+            ),
+            (
+                center[0] - 20,
+                center[1] + 24,
+            ),
+            5,
+        )
 
 
 def _bread_surface(
@@ -972,6 +1002,78 @@ def _draw_bread(
         145
         if ghost
         else 255
+    )
+    screen.blit(
+        surf,
+        surf.get_rect(
+            center=(
+                int(x),
+                int(y),
+            )
+        ),
+    )
+
+
+def _game_surface(
+    alpha: int = 255,
+) -> pygame.Surface:
+    surf = pygame.Surface(
+        (48, 54),
+        pygame.SRCALPHA,
+    )
+    pygame.draw.ellipse(
+        surf,
+        (0, 0, 0, min(alpha, 70)),
+        (8, 44, 32, 7),
+    )
+    pygame.draw.rect(
+        surf,
+        (46, 55, 66, alpha),
+        (8, 7, 32, 39),
+        border_radius=7,
+    )
+    pygame.draw.rect(
+        surf,
+        (25, 31, 38, alpha),
+        (12, 11, 24, 17),
+        border_radius=4,
+    )
+    pygame.draw.rect(
+        surf,
+        (92, 197, 155, alpha),
+        (15, 14, 18, 11),
+        border_radius=3,
+    )
+    pygame.draw.circle(
+        surf,
+        (230, 108, 113, alpha),
+        (18, 35),
+        3,
+    )
+    pygame.draw.circle(
+        surf,
+        (235, 190, 88, alpha),
+        (29, 35),
+        3,
+    )
+    pygame.draw.line(
+        surf,
+        (184, 194, 204, alpha),
+        (13, 42),
+        (35, 42),
+        2,
+    )
+    return surf
+
+
+def _draw_game(
+    screen: pygame.Surface,
+    x: float,
+    y: float,
+    ghost: bool = False,
+) -> None:
+    surf = _game_surface(
+        145 if ghost else 255
     )
     screen.blit(
         surf,
@@ -1113,6 +1215,13 @@ def _draw_arena(
             y,
         )
 
+    for x, y in world.games:
+        _draw_game(
+            screen,
+            x,
+            y,
+        )
+
     for person_id in (
         world.person_ids()
     ):
@@ -1155,6 +1264,16 @@ def _draw_arena(
                 == "bread"
             ):
                 _draw_bread(
+                    screen,
+                    mx,
+                    my,
+                    ghost=True,
+                )
+            elif (
+                placing_item_id
+                == "game"
+            ):
+                _draw_game(
                     screen,
                     mx,
                     my,
@@ -1425,12 +1544,14 @@ def _draw_panel(
         20,
     )
 
-    status = (
-        "睡眠"
-        if selected_person
-        in sleeping_ids
-        else "清醒"
-    )
+    if not view.alive:
+        status = "死亡"
+    elif view.starvation_seconds > 0.0:
+        status = "濒死"
+    elif selected_person in sleeping_ids:
+        status = "睡眠"
+    else:
+        status = "清醒"
     chip = pygame.Rect(
         WIDTH - 78,
         22,
@@ -1446,9 +1567,13 @@ def _draw_panel(
     pygame.draw.circle(
         screen,
         (
-            BLUE
-            if status == "睡眠"
-            else ACCENT
+            DANGER
+            if status in {"死亡", "濒死"}
+            else (
+                BLUE
+                if status == "睡眠"
+                else ACCENT
+            )
         ),
         (
             chip.x + 12,
@@ -1513,12 +1638,19 @@ def _draw_panel(
     bx = state_card.x + 14
     bw = state_card.w - 28
 
+    hunger_label = "饥饿"
+    if view.starvation_seconds > 0.0 and view.alive:
+        hunger_label = (
+            f"饥饿 · "
+            f"{int(math.ceil(view.starvation_remaining))}秒"
+        )
+
     _meter(
         screen,
         font_small,
         bx,
         137,
-        "饥饿",
+        hunger_label,
         view.hunger,
         WARM,
         bw,
@@ -1538,8 +1670,8 @@ def _draw_panel(
         font_small,
         bx,
         203,
-        "社交",
-        view.social_drive,
+        "心情",
+        view.mood,
         PURPLE,
         bw,
     )
@@ -1592,8 +1724,10 @@ def _draw_panel(
                 ),
             ),
             (
-                "速度",
-                f"{view.speed:.0f}",
+                "游戏",
+                str(
+                    view.games_played
+                ),
             ),
         ),
         font_small,
@@ -1616,7 +1750,7 @@ def _draw_panel(
     _text(
         screen,
         font_small,
-        f"共享学习  ×{len(world.person_ids())}",
+        f"共享学习  ×{world.living_count()}",
         learning_card.x + 14,
         learning_card.y + 8,
         MUTED,
@@ -2508,6 +2642,34 @@ def run() -> int:
                         last_event_text = (
                             "已放置面包"
                         )
+                    elif (
+                        placing_item_id
+                        == "game"
+                    ):
+                        px, py = (
+                            world.place_game(
+                                mx,
+                                my,
+                            )
+                        )
+                        store.append_episode(
+                            "place_item",
+                            0.1,
+                            {
+                                "item": "game",
+                                "x": round(
+                                    px,
+                                    2,
+                                ),
+                                "y": round(
+                                    py,
+                                    2,
+                                ),
+                            },
+                        )
+                        last_event_text = (
+                            "已放置游戏机"
+                        )
                     elif item:
                         last_event_text = (
                             f"暂不支持放置"
@@ -2558,6 +2720,7 @@ def run() -> int:
             body_events = (
                 world.update_people(dt)
             )
+            died_this_tick: set[str] = set()
 
             for body_event in body_events:
                 pid = body_event[
@@ -2566,33 +2729,86 @@ def run() -> int:
                 view = world.person_view(
                     pid
                 )
-                store.append_episode(
-                    "ate_bread",
-                    1.0,
-                    {
-                        "person_id": pid,
-                        "gender": (
-                            body_event[
-                                "gender"
-                            ]
-                        ),
-                        "hunger_after": round(
-                            body_event[
-                                "hunger_after"
-                            ],
-                            3,
-                        ),
-                        "satiety_gain": 0.15,
-                    },
-                )
-                last_event_text = (
-                    f"{view.name} 吃到面包"
-                )
+                kind = body_event[
+                    "kind"
+                ]
 
+                if kind == "ate_bread":
+                    store.append_episode(
+                        "ate_bread",
+                        1.0,
+                        {
+                            "person_id": pid,
+                            "gender": (
+                                body_event[
+                                    "gender"
+                                ]
+                            ),
+                            "hunger_after": round(
+                                body_event[
+                                    "hunger_after"
+                                ],
+                                3,
+                            ),
+                            "satiety_gain": 0.15,
+                        },
+                    )
+                    last_event_text = (
+                        f"{view.name} 吃到面包"
+                    )
+                elif kind == "played_game":
+                    store.append_episode(
+                        "played_game",
+                        1.0,
+                        {
+                            "person_id": pid,
+                            "gender": (
+                                body_event[
+                                    "gender"
+                                ]
+                            ),
+                            "mood_after": round(
+                                body_event[
+                                    "mood_after"
+                                ],
+                                3,
+                            ),
+                        },
+                    )
+                    last_event_text = (
+                        f"{view.name} 玩游戏"
+                    )
+                elif kind == "died":
+                    died_this_tick.add(
+                        pid
+                    )
+                    sleeping_ids.discard(
+                        pid
+                    )
+                    store.append_episode(
+                        "death",
+                        1.0,
+                        {
+                            "person_id": pid,
+                            "gender": (
+                                body_event[
+                                    "gender"
+                                ]
+                            ),
+                            "reason": "starvation",
+                        },
+                    )
+                    last_event_text = (
+                        f"{view.name} 饿死"
+                    )
+
+            living_ids = (
+                world.living_ids()
+            )
             sensors_by_id = {
                 pid: world.sense(pid)
                 for pid
-                in world.person_ids()
+                in living_ids
             }
 
             for pid in (
@@ -2610,6 +2826,26 @@ def run() -> int:
                         pid
                     )
                 )
+                if pid in died_this_tick:
+                    learner.learn(
+                        0.0,
+                        max(
+                            2.0,
+                            pain_signal,
+                        ),
+                        world.sense(pid),
+                        view.hunger,
+                        agent_id=pid,
+                        terminal=True,
+                    )
+                    learner.pause(
+                        agent_id=pid
+                    )
+                    continue
+
+                if not view.alive:
+                    continue
+
                 learner.learn(
                     dopamine_signal,
                     pain_signal,
@@ -2715,7 +2951,7 @@ def run() -> int:
                 )
 
             for pid in (
-                world.person_ids()
+                living_ids
             ):
                 view = world.person_view(
                     pid
@@ -2910,7 +3146,7 @@ def run() -> int:
                 )
 
             for pid in (
-                world.person_ids()
+                world.living_ids()
             ):
                 next_sensors = (
                     world.sense(pid)
