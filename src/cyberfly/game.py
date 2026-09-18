@@ -11,6 +11,14 @@ import time
 import pygame
 
 from .brain_adapter import BrainOutputs, MaleCNSBrain
+from .commands import (
+    ActiveCommand,
+    command_bias as behavior_command_bias,
+    command_is_complete,
+    command_strength as behavior_command_strength,
+    make_active_command,
+    parse_command,
+)
 from .introspection import NeuralIntent, interpret_neural_intent
 from .items import get_item, search_items
 from .learning import FastValenceLearner, LearningBias
@@ -71,6 +79,18 @@ PLACE_RECT = pygame.Rect(
     620,
     PANEL_W - PANEL_PAD * 2,
     44,
+)
+COMMAND_INPUT_RECT = pygame.Rect(
+    ARENA_W + PANEL_PAD,
+    684,
+    PANEL_W - PANEL_PAD * 2 - 62,
+    36,
+)
+COMMAND_SEND_RECT = pygame.Rect(
+    COMMAND_INPUT_RECT.right + 8,
+    684,
+    54,
+    36,
 )
 DROPDOWN_TOP = 614
 DROPDOWN_ROW_H = 42
@@ -1497,6 +1517,70 @@ def _draw_add_button(
     )
 
 
+def _draw_neural_overlay(
+    screen: pygame.Surface,
+    neural_intent: NeuralIntent | None,
+    command_label: str,
+    font_small: pygame.font.Font,
+) -> None:
+    if neural_intent is None:
+        return
+
+    rect = pygame.Rect(
+        ARENA_W - 336,
+        18,
+        316,
+        62,
+    )
+    pygame.draw.rect(
+        screen,
+        (24, 49, 31),
+        rect,
+        border_radius=12,
+    )
+    pygame.draw.rect(
+        screen,
+        (92, 141, 103),
+        rect,
+        1,
+        border_radius=12,
+    )
+
+    title = (
+        f"神经意图  {neural_intent.dominant} "
+        f"{int(neural_intent.confidence * 100)}% "
+        f"· {neural_intent.action}"
+    )
+    _text(
+        screen,
+        font_small,
+        title,
+        rect.x + 12,
+        rect.y + 9,
+        TEXT,
+    )
+
+    if command_label:
+        second = (
+            f"指令 {command_label} · "
+            f"影响 {int(neural_intent.raw['指令影响'] * 100)}%"
+        )
+    else:
+        second = (
+            f"无指令 · 饿 "
+            f"{int(neural_intent.raw['饥饿'] * 100)} "
+            f"痛 {int(neural_intent.raw['疼痛'] * 100)}"
+        )
+    _text(
+        screen,
+        font_small,
+        second,
+        rect.x + 12,
+        rect.y + 34,
+        MUTED,
+    )
+
+
 def _draw_panel(
     screen: pygame.Surface,
     world: CyberFlyWorld,
@@ -1513,7 +1597,9 @@ def _draw_panel(
     search_active: bool,
     search_text: str,
     last_event_text: str,
-    neural_intent: NeuralIntent | None,
+    command_active: bool,
+    command_text: str,
+    command_label: str,
     mouse_pos: tuple[int, int],
     font_small: pygame.font.Font,
     font: pygame.font.Font,
@@ -1991,56 +2077,131 @@ def _draw_panel(
         ),
     )
 
-    event_card = pygame.Rect(
+    command_caption = (
+        f"指令 · {command_label}"
+        if command_label
+        else "指令 · 当前人物"
+    )
+    _text(
+        screen,
+        font_small,
+        command_caption,
         x,
-        676,
-        PANEL_W
-        - PANEL_PAD * 2,
-        50,
+        666,
+        MUTED,
+    )
+
+    command_hover = (
+        COMMAND_INPUT_RECT.collidepoint(
+            mouse_pos
+        )
     )
     pygame.draw.rect(
         screen,
-        CARD,
-        event_card,
-        border_radius=12,
+        (
+            CARD_HOVER
+            if command_hover
+            or command_active
+            else CARD
+        ),
+        COMMAND_INPUT_RECT,
+        border_radius=9,
     )
-    if neural_intent is not None:
-        intent_title = (
-            f"神经意图  {neural_intent.dominant} "
-            f"{int(neural_intent.confidence * 100)}%"
+    pygame.draw.rect(
+        screen,
+        (
+            ACCENT
+            if command_active
+            else LINE
+        ),
+        COMMAND_INPUT_RECT,
+        1,
+        border_radius=9,
+    )
+
+    command_display = (
+        command_text
+        if command_text
+        else "例如：去吃面包"
+    )
+    command_color = (
+        TEXT
+        if command_text
+        else MUTED
+    )
+    command_img = font_small.render(
+        command_display,
+        True,
+        command_color,
+    )
+    max_command_width = (
+        COMMAND_INPUT_RECT.w - 20
+    )
+    if (
+        command_img.get_width()
+        > max_command_width
+    ):
+        visible = command_display
+        while (
+            visible
+            and font_small.size(
+                visible
+            )[0]
+            > max_command_width
+        ):
+            visible = visible[1:]
+        command_img = font_small.render(
+            visible,
+            True,
+            command_color,
         )
-        intent_action = (
-            f"动作 {neural_intent.action} · "
-            f"饿 {int(neural_intent.raw['饥饿'] * 100)} "
-            f"痛 {int(neural_intent.raw['疼痛'] * 100)} "
-            f"繁衍 {int(neural_intent.scores['繁衍'] * 100)} "
-            f"娱乐 {int(neural_intent.scores['娱乐'] * 100)}"
+
+    screen.blit(
+        command_img,
+        (
+            COMMAND_INPUT_RECT.x + 10,
+            COMMAND_INPUT_RECT.centery
+            - command_img.get_height()
+            // 2,
+        ),
+    )
+
+    if (
+        command_active
+        and int(
+            time.monotonic() * 2
         )
-        _text(
+        % 2
+        == 0
+    ):
+        caret_x = min(
+            COMMAND_INPUT_RECT.right - 8,
+            COMMAND_INPUT_RECT.x
+            + 10
+            + command_img.get_width()
+            + 2,
+        )
+        pygame.draw.line(
             screen,
-            font_small,
-            intent_title,
-            event_card.x + 12,
-            event_card.y + 7,
             TEXT,
+            (
+                caret_x,
+                COMMAND_INPUT_RECT.y + 9,
+            ),
+            (
+                caret_x,
+                COMMAND_INPUT_RECT.bottom - 9,
+            ),
+            1,
         )
-        _text(
-            screen,
-            font_small,
-            intent_action,
-            event_card.x + 12,
-            event_card.y + 27,
-            MUTED,
-        )
-    else:
-        _text(
-            screen,
-            font_small,
-            last_event_text,
-            event_card.x + 12,
-            event_card.y + 16,
-            MUTED,
-        )
+
+    _draw_add_button(
+        screen,
+        COMMAND_SEND_RECT,
+        "发送",
+        mouse_pos,
+        font_small,
+    )
 
     footer = (
         "点击人物切换  ·  Q 退出"
@@ -2048,6 +2209,7 @@ def _draw_panel(
     if (
         placing_item_id
         or dropdown_open
+        or command_active
     ):
         footer = (
             "Esc 取消  ·  Q 退出"
@@ -2213,6 +2375,12 @@ def run() -> int:
     dropdown_open = False
     search_active = False
     search_text = ""
+    command_active = False
+    command_text = ""
+    active_commands: dict[
+        str,
+        ActiveCommand,
+    ] = {}
 
     simulation_speed = 1.0
     speed_dragging = False
@@ -2313,6 +2481,87 @@ def run() -> int:
         dropdown_open = False
         pygame.key.stop_text_input()
 
+    def close_command() -> None:
+        nonlocal command_active
+        command_active = False
+        pygame.key.stop_text_input()
+
+    def issue_command() -> bool:
+        nonlocal command_active
+        nonlocal command_text
+        nonlocal last_event_text
+
+        parsed = parse_command(
+            command_text
+        )
+        if parsed is None:
+            last_event_text = (
+                "无法识别这条指令"
+            )
+            return False
+
+        if parsed.scope == "all":
+            targets = list(
+                world.living_ids()
+            )
+        else:
+            targets = (
+                [selected_person]
+                if (
+                    selected_person
+                    in world.living_ids()
+                )
+                else []
+            )
+
+        if not targets:
+            last_event_text = (
+                "没有可执行指令的人物"
+            )
+            return False
+
+        if parsed.goal is None:
+            for pid in targets:
+                active_commands.pop(
+                    pid,
+                    None,
+                )
+            last_event_text = (
+                "已取消所有人指令"
+                if parsed.scope == "all"
+                else "已取消当前指令"
+            )
+        else:
+            for pid in targets:
+                active_commands[pid] = (
+                    make_active_command(
+                        parsed.goal,
+                        world.person_view(pid),
+                    )
+                )
+            last_event_text = (
+                f"已下达：{parsed.label}"
+                + (
+                    "（所有人）"
+                    if parsed.scope == "all"
+                    else ""
+                )
+            )
+
+        store.append_episode(
+            "user_command",
+            0.15,
+            {
+                "text": parsed.original,
+                "scope": parsed.scope,
+                "goal": parsed.goal,
+                "targets": targets,
+            },
+        )
+        command_text = ""
+        close_command()
+        return True
+
     def choose_first_search_result() -> bool:
         nonlocal selected_item_id
         nonlocal search_text
@@ -2411,13 +2660,18 @@ def run() -> int:
                 if (
                     event.type
                     == pygame.TEXTINPUT
-                    and search_active
                 ):
-                    search_text += (
-                        event.text
-                    )
-                    dropdown_open = True
-                    continue
+                    if command_active:
+                        command_text += (
+                            event.text
+                        )
+                        continue
+                    if search_active:
+                        search_text += (
+                            event.text
+                        )
+                        dropdown_open = True
+                        continue
 
                 if (
                     event.type
@@ -2443,6 +2697,27 @@ def run() -> int:
                     event.type
                     == pygame.KEYDOWN
                 ):
+                    if command_active:
+                        if (
+                            event.key
+                            == pygame.K_BACKSPACE
+                        ):
+                            command_text = (
+                                command_text[:-1]
+                            )
+                        elif (
+                            event.key
+                            == pygame.K_RETURN
+                        ):
+                            issue_command()
+                        elif (
+                            event.key
+                            == pygame.K_ESCAPE
+                        ):
+                            command_text = ""
+                            close_command()
+                        continue
+
                     if search_active:
                         if (
                             event.key
@@ -2503,6 +2778,24 @@ def run() -> int:
                     continue
 
                 if event.button != 1:
+                    continue
+
+                if (
+                    COMMAND_INPUT_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    close_search()
+                    command_active = True
+                    pygame.key.start_text_input()
+                    continue
+
+                if (
+                    COMMAND_SEND_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    issue_command()
                     continue
 
                 if (
@@ -2578,6 +2871,14 @@ def run() -> int:
                             None,
                         )
                         biases.pop(
+                            removed_id,
+                            None,
+                        )
+                        active_commands.pop(
+                            removed_id,
+                            None,
+                        )
+                        active_commands.pop(
                             removed_id,
                             None,
                         )
@@ -2731,6 +3032,7 @@ def run() -> int:
                         event.pos
                     )
                 ):
+                    close_command()
                     placing_item_id = None
                     search_text = ""
                     search_active = True
@@ -2968,6 +3270,10 @@ def run() -> int:
                     sleeping_ids.discard(
                         pid
                     )
+                    active_commands.pop(
+                        pid,
+                        None,
+                    )
                     store.append_episode(
                         "death",
                         1.0,
@@ -2993,6 +3299,44 @@ def run() -> int:
                 for pid
                 in living_ids
             }
+
+            for pid in list(
+                living_ids
+            ):
+                active_command = (
+                    active_commands.get(
+                        pid
+                    )
+                )
+                if active_command is None:
+                    continue
+                active_command.elapsed += dt
+                if command_is_complete(
+                    active_command,
+                    world.person_view(pid),
+                    sensors_by_id[pid],
+                ):
+                    completed = (
+                        active_commands.pop(
+                            pid
+                        )
+                    )
+                    store.append_episode(
+                        "command_complete",
+                        0.1,
+                        {
+                            "person_id": pid,
+                            "goal": completed.goal,
+                        },
+                    )
+                    if (
+                        pid
+                        == selected_person
+                    ):
+                        last_event_text = (
+                            f"指令完成："
+                            f"{completed.label}"
+                        )
 
             for pid in (
                 world.person_ids()
@@ -3171,10 +3515,26 @@ def run() -> int:
                     pid
                 )
 
+                active_command = (
+                    active_commands.get(
+                        pid
+                    )
+                )
+                rest_requested = (
+                    active_command is not None
+                    and active_command.goal
+                    == "rest"
+                    and view.hunger < 0.90
+                    and view.pain < 0.65
+                )
+
                 if (
-                    view.fatigue > 0.88
-                    and view.hunger < 0.78
-                    and outputs.escape < 0.3
+                    rest_requested
+                    or (
+                        view.fatigue > 0.88
+                        and view.hunger < 0.78
+                        and outputs.escape < 0.3
+                    )
                 ):
                     if (
                         pid
@@ -3242,6 +3602,15 @@ def run() -> int:
                     agent_id=pid,
                 )
                 biases[pid] = bias
+                user_bias = (
+                    behavior_command_bias(
+                        active_commands.get(
+                            pid
+                        ),
+                        view,
+                        sensors,
+                    )
+                )
 
                 memory_turn = (
                     sensors.memory_food_right
@@ -3253,6 +3622,7 @@ def run() -> int:
                     _clamp(
                         outputs.forward
                         + bias.forward
+                        + user_bias.forward
                     ),
                     max(
                         -1.0,
@@ -3260,16 +3630,19 @@ def run() -> int:
                             1.0,
                             outputs.turn
                             + memory_turn
-                            + bias.turn,
+                            + bias.turn
+                            + user_bias.turn,
                         ),
                     ),
                     _clamp(
                         outputs.backward
                         + bias.backward
+                        + user_bias.backward
                     ),
                     _clamp(
                         outputs.escape
                         + bias.escape
+                        + user_bias.escape
                     ),
                     person_id=pid,
                 )
@@ -3439,11 +3812,42 @@ def run() -> int:
                     selected_person,
                     LearningBias(),
                 )
+                selected_command = (
+                    active_commands.get(
+                        selected_person
+                    )
+                )
+                selected_command_strength = (
+                    behavior_command_strength(
+                        selected_command,
+                        selected_view,
+                        selected_sensors,
+                    )
+                )
                 selected_intent = interpret_neural_intent(
                     selected_view,
                     selected_sensors,
                     outputs,
                     selected_bias,
+                    command_goal=(
+                        selected_command.goal
+                        if selected_command
+                        else None
+                    ),
+                    command_strength=(
+                        selected_command_strength
+                    ),
+                )
+
+            selected_command_label = ""
+            if (
+                selected_person
+                in active_commands
+            ):
+                selected_command_label = (
+                    active_commands[
+                        selected_person
+                    ].label
                 )
 
             _draw_arena(
@@ -3453,6 +3857,13 @@ def run() -> int:
                 hovered_person,
                 placing_item_id,
                 mouse_pos,
+                font_small,
+            )
+
+            _draw_neural_overlay(
+                screen,
+                selected_intent,
+                selected_command_label,
                 font_small,
             )
 
@@ -3475,7 +3886,9 @@ def run() -> int:
                 search_active,
                 search_text,
                 last_event_text,
-                selected_intent,
+                command_active,
+                command_text,
+                selected_command_label,
                 mouse_pos,
                 font_small,
                 font,
