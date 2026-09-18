@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import random
+from typing import Any
 
 from .memory import PetSnapshot
 
@@ -10,7 +11,11 @@ from .memory import PetSnapshot
 TAU = math.tau
 
 
-def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
+def _clamp(
+    v: float,
+    lo: float = 0.0,
+    hi: float = 1.0,
+) -> float:
     return max(lo, min(hi, v))
 
 
@@ -32,9 +37,162 @@ class Sensors:
     memory_food_right: float = 0.0
 
 
+@dataclass
+class PersonState:
+    person_id: str
+    gender: str
+    x: float
+    y: float
+    heading: float
+    hunger: float = 0.35
+    fatigue: float = 0.15
+    social_drive: float = 0.30
+    dopamine: float = 0.0
+    pain: float = 0.0
+    age_seconds: float = 0.0
+    food_eaten: int = 0
+    reward_events: int = 0
+    pain_events: int = 0
+    walk_phase: float = 0.0
+    speed: float = 0.0
+    last_food_distance: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "person_id": self.person_id,
+            "gender": self.gender,
+            "x": round(float(self.x), 4),
+            "y": round(float(self.y), 4),
+            "heading": round(float(self.heading), 6),
+            "hunger": round(float(self.hunger), 6),
+            "fatigue": round(float(self.fatigue), 6),
+            "social_drive": round(float(self.social_drive), 6),
+            "dopamine": round(float(self.dopamine), 6),
+            "pain": round(float(self.pain), 6),
+            "age_seconds": round(float(self.age_seconds), 4),
+            "food_eaten": int(self.food_eaten),
+            "reward_events": int(self.reward_events),
+            "pain_events": int(self.pain_events),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: dict[str, Any],
+        fallback_id: str,
+        fallback_gender: str,
+        fallback_x: float,
+        fallback_y: float,
+    ) -> "PersonState":
+        gender = str(
+            raw.get("gender", fallback_gender)
+        ).lower()
+        if gender not in {"male", "female"}:
+            gender = fallback_gender
+
+        return cls(
+            person_id=str(
+                raw.get(
+                    "person_id",
+                    fallback_id,
+                )
+            ),
+            gender=gender,
+            x=float(
+                raw.get("x", fallback_x)
+            ),
+            y=float(
+                raw.get("y", fallback_y)
+            ),
+            heading=float(
+                raw.get(
+                    "heading",
+                    0.0,
+                )
+            ),
+            hunger=_clamp(
+                float(
+                    raw.get(
+                        "hunger",
+                        0.35,
+                    )
+                )
+            ),
+            fatigue=_clamp(
+                float(
+                    raw.get(
+                        "fatigue",
+                        0.15,
+                    )
+                )
+            ),
+            social_drive=_clamp(
+                float(
+                    raw.get(
+                        "social_drive",
+                        0.30,
+                    )
+                )
+            ),
+            dopamine=_clamp(
+                float(
+                    raw.get(
+                        "dopamine",
+                        0.0,
+                    )
+                )
+            ),
+            pain=_clamp(
+                float(
+                    raw.get(
+                        "pain",
+                        0.0,
+                    )
+                )
+            ),
+            age_seconds=max(
+                0.0,
+                float(
+                    raw.get(
+                        "age_seconds",
+                        0.0,
+                    )
+                ),
+            ),
+            food_eaten=max(
+                0,
+                int(
+                    raw.get(
+                        "food_eaten",
+                        0,
+                    )
+                ),
+            ),
+            reward_events=max(
+                0,
+                int(
+                    raw.get(
+                        "reward_events",
+                        0,
+                    )
+                ),
+            ),
+            pain_events=max(
+                0,
+                int(
+                    raw.get(
+                        "pain_events",
+                        0,
+                    )
+                ),
+            ),
+        )
+
+
 @dataclass(frozen=True)
 class PersonView:
     person_id: str
+    gender: str
     name: str
     x: float
     y: float
@@ -46,9 +204,15 @@ class PersonView:
     pain: float
     age_seconds: float
     food_eaten: int
+    reward_events: int
+    pain_events: int
+    walk_phase: float
+    speed: float
 
 
 class CyberFlyWorld:
+    FEMALE_SPEED_MULTIPLIER = 1.30
+
     def __init__(
         self,
         width: int = 1100,
@@ -59,454 +223,1034 @@ class CyberFlyWorld:
         self.width = width
         self.height = height
         self.rng = rng or random.Random()
-        self.state = snapshot or PetSnapshot(x=width * 0.5, y=height * 0.5)
-        self.food: list[tuple[float, float]] = []
+        self.state = snapshot or PetSnapshot()
 
-        self.mate = [self.state.female_x, self.state.female_y]
-        self.mate_heading = self.state.female_heading
-        self._mate_turn_timer = 0.0
+        self.food: list[
+            tuple[float, float]
+        ] = []
+        self.people: dict[
+            str, PersonState
+        ] = {}
+        self._signals: dict[
+            str,
+            dict[str, Any],
+        ] = {}
 
-        self._dopamine_signal = 0.0
-        self._pain_signal = 0.0
-        self._signal_reasons: list[str] = []
-        self._last_food_distance: float | None = None
+        self._load_people()
+        self.sync_snapshot()
 
-        self.male_walk_phase = 0.0
-        self.female_walk_phase = 0.0
-        self.male_speed = 0.0
-        self.female_speed = 0.0
+    def _load_people(self) -> None:
+        raw_people = self.state.people
 
-    def place_food(self, x: float, y: float) -> tuple[float, float]:
+        if raw_people:
+            for index, raw in enumerate(
+                raw_people,
+                start=1,
+            ):
+                if not isinstance(raw, dict):
+                    continue
+                fallback_gender = (
+                    "male"
+                    if index % 2
+                    else "female"
+                )
+                person = PersonState.from_dict(
+                    raw,
+                    fallback_id=(
+                        f"{fallback_gender}_{index}"
+                    ),
+                    fallback_gender=(
+                        fallback_gender
+                    ),
+                    fallback_x=(
+                        self.width * 0.45
+                    ),
+                    fallback_y=(
+                        self.height * 0.50
+                    ),
+                )
+                person.person_id = (
+                    self._unique_id(
+                        person.person_id,
+                        person.gender,
+                    )
+                )
+                self.people[
+                    person.person_id
+                ] = person
+
+        if not self.people:
+            male = PersonState(
+                person_id="male_1",
+                gender="male",
+                x=float(self.state.x),
+                y=float(self.state.y),
+                heading=float(
+                    self.state.heading
+                ),
+                hunger=float(
+                    self.state.hunger
+                ),
+                fatigue=float(
+                    self.state.fatigue
+                ),
+                social_drive=float(
+                    self.state.social_drive
+                ),
+                dopamine=float(
+                    self.state.dopamine
+                ),
+                pain=float(
+                    self.state.pain
+                ),
+                age_seconds=float(
+                    self.state.age_seconds
+                ),
+                food_eaten=int(
+                    self.state.food_eaten
+                ),
+                reward_events=int(
+                    self.state.reward_events
+                ),
+                pain_events=int(
+                    self.state.pain_events
+                ),
+            )
+            female = PersonState(
+                person_id="female_1",
+                gender="female",
+                x=float(
+                    self.state.female_x
+                ),
+                y=float(
+                    self.state.female_y
+                ),
+                heading=float(
+                    self.state.female_heading
+                ),
+                hunger=float(
+                    self.state.female_hunger
+                ),
+                fatigue=float(
+                    self.state.female_fatigue
+                ),
+                social_drive=float(
+                    self.state.female_social_drive
+                ),
+                dopamine=float(
+                    self.state.female_dopamine
+                ),
+                pain=float(
+                    self.state.female_pain
+                ),
+                age_seconds=float(
+                    self.state.female_age_seconds
+                ),
+                food_eaten=int(
+                    self.state.female_food_eaten
+                ),
+                reward_events=int(
+                    self.state.female_reward_events
+                ),
+                pain_events=int(
+                    self.state.female_pain_events
+                ),
+            )
+            self.people[male.person_id] = male
+            self.people[female.person_id] = female
+
+        if not any(
+            p.gender == "male"
+            for p in self.people.values()
+        ):
+            self.add_person("male")
+
+        if not any(
+            p.gender == "female"
+            for p in self.people.values()
+        ):
+            self.add_person("female")
+
+    def _unique_id(
+        self,
+        requested: str,
+        gender: str,
+    ) -> str:
+        if requested not in self.people:
+            return requested
+        n = 1
+        while (
+            f"{gender}_{n}"
+            in self.people
+        ):
+            n += 1
+        return f"{gender}_{n}"
+
+    def _next_id(
+        self,
+        gender: str,
+    ) -> str:
+        n = 1
+        while (
+            f"{gender}_{n}"
+            in self.people
+        ):
+            n += 1
+        return f"{gender}_{n}"
+
+    def _spawn_position(
+        self,
+    ) -> tuple[float, float]:
+        margin = 70.0
+
+        for _ in range(30):
+            x = self.rng.uniform(
+                margin,
+                self.width - margin,
+            )
+            y = self.rng.uniform(
+                margin,
+                self.height - margin,
+            )
+            if all(
+                math.hypot(
+                    x - p.x,
+                    y - p.y,
+                )
+                >= 85.0
+                for p in self.people.values()
+            ):
+                return x, y
+
+        return (
+            self.rng.uniform(
+                margin,
+                self.width - margin,
+            ),
+            self.rng.uniform(
+                margin,
+                self.height - margin,
+            ),
+        )
+
+    def add_person(
+        self,
+        gender: str,
+    ) -> str:
+        gender = str(gender).lower()
+        if gender not in {
+            "male",
+            "female",
+        }:
+            raise ValueError(
+                "gender must be male or female"
+            )
+
+        person_id = self._next_id(
+            gender
+        )
+        x, y = self._spawn_position()
+
+        person = PersonState(
+            person_id=person_id,
+            gender=gender,
+            x=x,
+            y=y,
+            heading=self.rng.uniform(
+                -math.pi,
+                math.pi,
+            ),
+            hunger=(
+                0.33
+                if gender == "male"
+                else 0.30
+            ),
+            fatigue=0.14,
+            social_drive=0.30,
+        )
+        self.people[
+            person_id
+        ] = person
+        self.sync_snapshot()
+        return person_id
+
+    def person_ids(
+        self,
+    ) -> list[str]:
+        return list(
+            self.people.keys()
+        )
+
+    def population_counts(
+        self,
+    ) -> tuple[int, int]:
+        males = sum(
+            p.gender == "male"
+            for p in self.people.values()
+        )
+        females = len(
+            self.people
+        ) - males
+        return males, females
+
+    def _resolve_person_id(
+        self,
+        person_id: str | None,
+    ) -> str:
+        if person_id in {
+            "male",
+            "female",
+        }:
+            target = str(person_id)
+            for pid, person in (
+                self.people.items()
+            ):
+                if (
+                    person.gender
+                    == target
+                ):
+                    return pid
+
+        if (
+            person_id
+            and person_id
+            in self.people
+        ):
+            return person_id
+
+        for pid, person in (
+            self.people.items()
+        ):
+            if person.gender == "male":
+                return pid
+
+        return next(
+            iter(self.people)
+        )
+
+    def person_view(
+        self,
+        person_id: str,
+    ) -> PersonView:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+
+        same_gender = [
+            p.person_id
+            for p in self.people.values()
+            if p.gender == person.gender
+        ]
+        number = (
+            same_gender.index(pid) + 1
+        )
+        name = (
+            f"男 {number}"
+            if person.gender == "male"
+            else f"女 {number}"
+        )
+
+        return PersonView(
+            person_id=pid,
+            gender=person.gender,
+            name=name,
+            x=person.x,
+            y=person.y,
+            heading=person.heading,
+            hunger=person.hunger,
+            fatigue=person.fatigue,
+            social_drive=(
+                person.social_drive
+            ),
+            dopamine=person.dopamine,
+            pain=person.pain,
+            age_seconds=(
+                person.age_seconds
+            ),
+            food_eaten=person.food_eaten,
+            reward_events=(
+                person.reward_events
+            ),
+            pain_events=(
+                person.pain_events
+            ),
+            walk_phase=(
+                person.walk_phase
+            ),
+            speed=person.speed,
+        )
+
+    def place_food(
+        self,
+        x: float,
+        y: float,
+    ) -> tuple[float, float]:
         margin = 28.0
-        px = max(margin, min(self.width - margin, float(x)))
-        py = max(margin, min(self.height - margin, float(y)))
+        px = max(
+            margin,
+            min(
+                self.width - margin,
+                float(x),
+            ),
+        )
+        py = max(
+            margin,
+            min(
+                self.height - margin,
+                float(y),
+            ),
+        )
         point = (px, py)
         self.food.append(point)
-        self._last_food_distance = self.nearest_food_distance()
+
+        for person in (
+            self.people.values()
+        ):
+            person.last_food_distance = (
+                self.nearest_food_distance(
+                    person.person_id
+                )
+            )
+
         return point
 
-    def person_view(self, person_id: str) -> PersonView:
-        st = self.state
-        if person_id == "female":
-            return PersonView(
-                person_id="female",
-                name="女",
-                x=st.female_x,
-                y=st.female_y,
-                heading=st.female_heading,
-                hunger=st.female_hunger,
-                fatigue=st.female_fatigue,
-                social_drive=st.female_social_drive,
-                dopamine=st.female_dopamine,
-                pain=st.female_pain,
-                age_seconds=st.female_age_seconds,
-                food_eaten=st.female_food_eaten,
-            )
-        return PersonView(
-            person_id="male",
-            name="男",
-            x=st.x,
-            y=st.y,
-            heading=st.heading,
-            hunger=st.hunger,
-            fatigue=st.fatigue,
-            social_drive=st.social_drive,
-            dopamine=st.dopamine,
-            pain=st.pain,
-            age_seconds=st.age_seconds,
-            food_eaten=st.food_eaten,
-        )
-
-    def _relative_side(self, tx: float, ty: float) -> tuple[float, float, float]:
-        dx = tx - self.state.x
-        dy = ty - self.state.y
-        distance = max(1e-6, math.hypot(dx, dy))
-        target_angle = math.atan2(dy, dx)
-        rel = _wrap_angle(target_angle - self.state.heading)
-        left = (
-            _clamp((-rel / math.pi + 1.0) * 0.5)
-            if rel < 0
-            else _clamp(0.5 - rel / math.pi)
-        )
-        right = (
-            _clamp((rel / math.pi + 1.0) * 0.5)
-            if rel > 0
-            else _clamp(0.5 + rel / math.pi)
-        )
-        if abs(rel) < 0.05:
-            left = right = 0.5
-        return distance, left, right
-
-    def _nearest(
+    def _nearest_food(
         self,
-        points: list[tuple[float, float]] | list[list[float]],
+        person: PersonState,
     ) -> tuple[float, float] | None:
-        if not points:
+        if not self.food:
             return None
         return min(
-            points,
-            key=lambda p: (p[0] - self.state.x) ** 2 + (p[1] - self.state.y) ** 2,
+            self.food,
+            key=lambda point: (
+                point[0] - person.x
+            ) ** 2
+            + (
+                point[1] - person.y
+            ) ** 2,
         )
 
-    def nearest_food_distance(self) -> float | None:
-        nearest = self._nearest(self.food)
+    def nearest_food_distance(
+        self,
+        person_id: str | None = None,
+    ) -> float | None:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+        nearest = self._nearest_food(
+            person
+        )
         if nearest is None:
             return None
         return math.hypot(
-            nearest[0] - self.state.x,
-            nearest[1] - self.state.y,
+            nearest[0] - person.x,
+            nearest[1] - person.y,
         )
 
-    def pulse_dopamine(
+    def _relative_side(
         self,
-        amount: float,
-        reason: str,
-        count_event: bool = False,
-    ) -> None:
-        amount = max(0.0, float(amount))
-        if amount <= 0.0:
-            return
-        self._dopamine_signal = min(
-            1.5,
-            self._dopamine_signal + amount,
+        person: PersonState,
+        tx: float,
+        ty: float,
+    ) -> tuple[float, float, float]:
+        dx = tx - person.x
+        dy = ty - person.y
+        distance = max(
+            1e-6,
+            math.hypot(dx, dy),
         )
-        self.state.dopamine = max(
-            self.state.dopamine,
-            _clamp(amount * 7.0),
+        target_angle = math.atan2(
+            dy,
+            dx,
         )
-        if reason:
-            self._signal_reasons.append(f"dopamine:{reason}")
-        if count_event:
-            self.state.reward_events += 1
+        rel = _wrap_angle(
+            target_angle
+            - person.heading
+        )
 
-    def pulse_pain(
+        left = (
+            _clamp(
+                (
+                    -rel / math.pi
+                    + 1.0
+                )
+                * 0.5
+            )
+            if rel < 0
+            else _clamp(
+                0.5
+                - rel / math.pi
+            )
+        )
+        right = (
+            _clamp(
+                (
+                    rel / math.pi
+                    + 1.0
+                )
+                * 0.5
+            )
+            if rel > 0
+            else _clamp(
+                0.5
+                + rel / math.pi
+            )
+        )
+
+        if abs(rel) < 0.05:
+            left = right = 0.5
+
+        return (
+            distance,
+            left,
+            right,
+        )
+
+    def _nearest_other(
         self,
-        amount: float,
-        reason: str,
-        count_event: bool = False,
-    ) -> None:
-        amount = max(0.0, float(amount))
-        if amount <= 0.0:
-            return
-        self._pain_signal = min(
-            1.5,
-            self._pain_signal + amount,
+        person: PersonState,
+    ) -> PersonState | None:
+        others = [
+            other
+            for other
+            in self.people.values()
+            if (
+                other.person_id
+                != person.person_id
+            )
+        ]
+        if not others:
+            return None
+        return min(
+            others,
+            key=lambda other: (
+                other.x - person.x
+            ) ** 2
+            + (
+                other.y - person.y
+            ) ** 2,
         )
-        self.state.pain = max(
-            self.state.pain,
-            _clamp(amount * 5.0),
-        )
-        if reason:
-            self._signal_reasons.append(f"pain:{reason}")
-        if count_event:
-            self.state.pain_events += 1
 
-    def consume_learning_signal(
+    def sense(
         self,
-    ) -> tuple[float, float, tuple[str, ...]]:
-        dopamine = self._dopamine_signal
-        pain = self._pain_signal
-        reasons = tuple(self._signal_reasons)
-        self._dopamine_signal = 0.0
-        self._pain_signal = 0.0
-        self._signal_reasons.clear()
-        return dopamine, pain, reasons
+        person_id: str | None = None,
+    ) -> Sensors:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+        sensors = Sensors()
 
-    def sense(self) -> Sensors:
-        s = Sensors()
-        nearest_food = self._nearest(self.food)
+        nearest_food = self._nearest_food(
+            person
+        )
         if nearest_food:
-            dist, left, right = self._relative_side(
-                nearest_food[0],
-                nearest_food[1],
+            dist, left, right = (
+                self._relative_side(
+                    person,
+                    nearest_food[0],
+                    nearest_food[1],
+                )
             )
-            s.food_odor = _clamp(
-                (1.0 - dist / 420.0)
-                * (0.35 + 0.65 * self.state.hunger)
+            sensors.food_odor = _clamp(
+                (
+                    1.0
+                    - dist / 420.0
+                )
+                * (
+                    0.35
+                    + 0.65
+                    * person.hunger
+                )
             )
-            s.food_left = s.food_odor * left
-            s.food_right = s.food_odor * right
+            sensors.food_left = (
+                sensors.food_odor
+                * left
+            )
+            sensors.food_right = (
+                sensors.food_odor
+                * right
+            )
 
-        dist, left, right = self._relative_side(
-            self.state.female_x,
-            self.state.female_y,
+        other = self._nearest_other(
+            person
         )
-        s.mate_visual = _clamp(
-            (1.0 - dist / 500.0)
-            * (0.35 + 0.65 * self.state.social_drive)
-        )
-        s.mate_left = s.mate_visual * left
-        s.mate_right = s.mate_visual * right
+        if other:
+            dist, left, right = (
+                self._relative_side(
+                    person,
+                    other.x,
+                    other.y,
+                )
+            )
+            sensors.mate_visual = _clamp(
+                (
+                    1.0
+                    - dist / 500.0
+                )
+                * (
+                    0.35
+                    + 0.65
+                    * person.social_drive
+                )
+            )
+            sensors.mate_left = (
+                sensors.mate_visual
+                * left
+            )
+            sensors.mate_right = (
+                sensors.mate_visual
+                * right
+            )
 
         wall_margin = 90.0
-        left_wall = self.state.x
-        right_wall = self.width - self.state.x
-        top_wall = self.state.y
-        bottom_wall = self.height - self.state.y
+        left_wall = person.x
+        right_wall = (
+            self.width - person.x
+        )
+        top_wall = person.y
+        bottom_wall = (
+            self.height - person.y
+        )
 
         for sign, attr in [
             (-1.0, "loom_left"),
             (1.0, "loom_right"),
         ]:
-            a = self.state.heading + sign * 0.55
-            ray_dx, ray_dy = math.cos(a), math.sin(a)
-            candidates: list[float] = []
+            a = (
+                person.heading
+                + sign * 0.55
+            )
+            ray_dx = math.cos(a)
+            ray_dy = math.sin(a)
+            candidates: list[
+                float
+            ] = []
+
             if ray_dx < -1e-5:
-                candidates.append(left_wall / -ray_dx)
+                candidates.append(
+                    left_wall / -ray_dx
+                )
             if ray_dx > 1e-5:
-                candidates.append(right_wall / ray_dx)
+                candidates.append(
+                    right_wall / ray_dx
+                )
             if ray_dy < -1e-5:
-                candidates.append(top_wall / -ray_dy)
+                candidates.append(
+                    top_wall / -ray_dy
+                )
             if ray_dy > 1e-5:
-                candidates.append(bottom_wall / ray_dy)
+                candidates.append(
+                    bottom_wall / ray_dy
+                )
 
             ray_dist = min(
-                (d for d in candidates if d >= 0),
+                (
+                    d
+                    for d in candidates
+                    if d >= 0
+                ),
                 default=9999.0,
             )
             setattr(
-                s,
+                sensors,
                 attr,
-                _clamp(1.0 - ray_dist / wall_margin),
+                _clamp(
+                    1.0
+                    - ray_dist
+                    / wall_margin
+                ),
             )
 
         if (
-            s.food_odor < 0.08
+            sensors.food_odor < 0.08
             and self.state.known_food_spots
         ):
-            remembered = self._nearest(
-                self.state.known_food_spots
+            remembered = min(
+                self.state.known_food_spots,
+                key=lambda point: (
+                    point[0] - person.x
+                ) ** 2
+                + (
+                    point[1] - person.y
+                ) ** 2,
             )
-            if remembered:
-                _, left, right = self._relative_side(
+            _, left, right = (
+                self._relative_side(
+                    person,
                     remembered[0],
                     remembered[1],
                 )
-                memory_strength = 0.18 * self.state.hunger
-                s.memory_food_left = left * memory_strength
-                s.memory_food_right = right * memory_strength
-
-        return s
-
-    def update_mate(self, dt: float) -> None:
-        st = self.state
-
-        st.female_age_seconds += dt
-        st.female_hunger = _clamp(
-            st.female_hunger + 0.0028 * dt
-        )
-        st.female_fatigue = _clamp(
-            st.female_fatigue + 0.0015 * dt
-        )
-        st.female_social_drive = _clamp(
-            st.female_social_drive + 0.0007 * dt
-        )
-        st.female_dopamine = _clamp(
-            st.female_dopamine - 0.80 * dt
-        )
-
-        female_hunger_pain = _clamp(
-            (st.female_hunger - 0.50) / 0.50
-        )
-        st.female_pain = max(
-            _clamp(st.female_pain - 0.70 * dt),
-            female_hunger_pain,
-        )
-
-        self._mate_turn_timer -= dt
-        if self._mate_turn_timer <= 0:
-            self._mate_turn_timer = self.rng.uniform(
-                1.2,
-                3.4,
             )
-            self.mate_heading += self.rng.uniform(
-                -0.95,
-                0.95,
+            memory_strength = (
+                0.18
+                * person.hunger
+            )
+            sensors.memory_food_left = (
+                left
+                * memory_strength
+            )
+            sensors.memory_food_right = (
+                right
+                * memory_strength
             )
 
-        speed = (
-            18.0
-            * (1.0 - 0.45 * st.female_fatigue)
-        )
-        old_x, old_y = self.mate[0], self.mate[1]
-        self.mate[0] += (
-            math.cos(self.mate_heading) * speed * dt
-        )
-        self.mate[1] += (
-            math.sin(self.mate_heading) * speed * dt
-        )
+        return sensors
 
-        bounced = False
-        if (
-            self.mate[0] < 35
-            or self.mate[0] > self.width - 35
-        ):
-            self.mate_heading = (
-                math.pi - self.mate_heading
-            )
-            bounced = True
-        if (
-            self.mate[1] < 35
-            or self.mate[1] > self.height - 35
-        ):
-            self.mate_heading = -self.mate_heading
-            bounced = True
+    @staticmethod
+    def aggregate_sensors(
+        sensors_list: list[Sensors],
+    ) -> Sensors:
+        if not sensors_list:
+            return Sensors()
 
-        self.mate[0] = max(
-            35,
-            min(self.width - 35, self.mate[0]),
+        fields = (
+            "food_odor",
+            "food_left",
+            "food_right",
+            "mate_visual",
+            "mate_left",
+            "mate_right",
+            "loom_left",
+            "loom_right",
+            "memory_food_left",
+            "memory_food_right",
         )
-        self.mate[1] = max(
-            35,
-            min(self.height - 35, self.mate[1]),
-        )
+        result = Sensors()
 
-        if bounced:
-            st.female_pain = max(
-                st.female_pain,
-                0.72,
-            )
-            st.female_pain_events += 1
-
-        moved = math.hypot(
-            self.mate[0] - old_x,
-            self.mate[1] - old_y,
-        )
-        self.female_speed = (
-            moved / max(dt, 1e-6)
-        )
-        self.female_walk_phase += moved * 0.22
-
-        st.female_x = self.mate[0]
-        st.female_y = self.mate[1]
-        st.female_heading = self.mate_heading
-
-    def _eat_for_male(self) -> bool:
-        st = self.state
-        for i, (fx, fy) in enumerate(self.food):
-            if (
-                math.hypot(fx - st.x, fy - st.y)
-                <= 24.0
-                and st.hunger > 0.18
-            ):
-                spot = [round(fx, 2), round(fy, 2)]
-                if spot not in st.known_food_spots:
-                    st.known_food_spots.append(spot)
-                    st.known_food_spots = (
-                        st.known_food_spots[-32:]
+        for field_name in fields:
+            setattr(
+                result,
+                field_name,
+                max(
+                    getattr(
+                        sensors,
+                        field_name,
                     )
-                st.hunger = _clamp(
-                    st.hunger - 0.15
+                    for sensors
+                    in sensors_list
+                ),
+            )
+
+        return result
+
+    def _signal(
+        self,
+        person_id: str,
+    ) -> dict[str, Any]:
+        return self._signals.setdefault(
+            person_id,
+            {
+                "dopamine": 0.0,
+                "pain": 0.0,
+                "reasons": [],
+            },
+        )
+
+    def pulse_dopamine(
+        self,
+        person_id: str,
+        amount: float,
+        reason: str,
+        count_event: bool = False,
+    ) -> None:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+        amount = max(
+            0.0,
+            float(amount),
+        )
+        if amount <= 0.0:
+            return
+
+        signal = self._signal(pid)
+        signal["dopamine"] = min(
+            1.5,
+            signal["dopamine"]
+            + amount,
+        )
+        person.dopamine = max(
+            person.dopamine,
+            _clamp(amount * 7.0),
+        )
+        if reason:
+            signal["reasons"].append(
+                f"dopamine:{reason}"
+            )
+        if count_event:
+            person.reward_events += 1
+
+    def pulse_pain(
+        self,
+        person_id: str,
+        amount: float,
+        reason: str,
+        count_event: bool = False,
+    ) -> None:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+        amount = max(
+            0.0,
+            float(amount),
+        )
+        if amount <= 0.0:
+            return
+
+        signal = self._signal(pid)
+        signal["pain"] = min(
+            1.5,
+            signal["pain"]
+            + amount,
+        )
+        person.pain = max(
+            person.pain,
+            _clamp(amount * 5.0),
+        )
+        if reason:
+            signal["reasons"].append(
+                f"pain:{reason}"
+            )
+        if count_event:
+            person.pain_events += 1
+
+    def consume_learning_signal(
+        self,
+        person_id: str | None = None,
+    ) -> tuple[
+        float,
+        float,
+        tuple[str, ...],
+    ]:
+        pid = self._resolve_person_id(
+            person_id
+        )
+        signal = self._signals.pop(
+            pid,
+            None,
+        )
+        if not signal:
+            return (
+                0.0,
+                0.0,
+                (),
+            )
+        return (
+            float(
+                signal["dopamine"]
+            ),
+            float(
+                signal["pain"]
+            ),
+            tuple(
+                signal["reasons"]
+            ),
+        )
+
+    def _remember_food(
+        self,
+        x: float,
+        y: float,
+    ) -> None:
+        spot = [
+            round(x, 2),
+            round(y, 2),
+        ]
+        if (
+            spot
+            not in self.state.known_food_spots
+        ):
+            self.state.known_food_spots.append(
+                spot
+            )
+            self.state.known_food_spots = (
+                self.state.known_food_spots[
+                    -64:
+                ]
+            )
+
+    def update_people(
+        self,
+        dt: float,
+    ) -> list[dict[str, Any]]:
+        events: list[
+            dict[str, Any]
+        ] = []
+
+        for person in (
+            self.people.values()
+        ):
+            person.age_seconds += dt
+            person.hunger = _clamp(
+                person.hunger
+                + (
+                    0.0032
+                    if person.gender
+                    == "male"
+                    else 0.0030
                 )
-                st.food_eaten += 1
+                * dt
+            )
+            person.fatigue = _clamp(
+                person.fatigue
+                + 0.0017 * dt
+            )
+            person.social_drive = _clamp(
+                person.social_drive
+                + 0.0008 * dt
+            )
+            person.dopamine = _clamp(
+                person.dopamine
+                - 0.85 * dt
+            )
+            person.pain = _clamp(
+                person.pain
+                - 0.70 * dt
+            )
+
+            current_distance = (
+                self.nearest_food_distance(
+                    person.person_id
+                )
+            )
+            if (
+                current_distance
+                is not None
+                and person.last_food_distance
+                is not None
+            ):
+                progress = (
+                    person.last_food_distance
+                    - current_distance
+                )
+                if (
+                    progress > 0.25
+                    and person.hunger
+                    > 0.30
+                ):
+                    shaping = (
+                        min(
+                            0.032,
+                            progress * 0.0085,
+                        )
+                        * (
+                            0.35
+                            + 0.65
+                            * person.hunger
+                        )
+                    )
+                    self.pulse_dopamine(
+                        person.person_id,
+                        shaping,
+                        "approach_bread",
+                    )
+            person.last_food_distance = (
+                current_distance
+            )
+
+            hunger_pain = _clamp(
+                (
+                    person.hunger
+                    - 0.50
+                )
+                / 0.50
+            )
+            if hunger_pain > 0.0:
+                signal = self._signal(
+                    person.person_id
+                )
+                signal["pain"] = min(
+                    1.5,
+                    signal["pain"]
+                    + hunger_pain
+                    * dt
+                    * 0.60,
+                )
+                person.pain = max(
+                    person.pain,
+                    hunger_pain,
+                )
+                signal["reasons"].append(
+                    "pain:hunger"
+                )
+
+        for person in list(
+            self.people.values()
+        ):
+            if person.hunger <= 0.18:
+                continue
+
+            for i, (fx, fy) in enumerate(
+                list(self.food)
+            ):
+                if (
+                    math.hypot(
+                        fx - person.x,
+                        fy - person.y,
+                    )
+                    > 25.0
+                ):
+                    continue
+
+                self.food.pop(i)
+                person.hunger = _clamp(
+                    person.hunger - 0.15
+                )
+                person.food_eaten += 1
+                self._remember_food(
+                    fx,
+                    fy,
+                )
                 self.pulse_dopamine(
+                    person.person_id,
                     1.0,
                     "ate_bread",
                     count_event=True,
                 )
-                self.food.pop(i)
-                self._last_food_distance = (
-                    self.nearest_food_distance()
+                events.append(
+                    {
+                        "kind": "ate_bread",
+                        "person_id": (
+                            person.person_id
+                        ),
+                        "gender": (
+                            person.gender
+                        ),
+                        "hunger_after": (
+                            person.hunger
+                        ),
+                    }
                 )
-                return True
-        return False
 
-    def _eat_for_female(self) -> bool:
-        st = self.state
-        for i, (fx, fy) in enumerate(self.food):
-            if (
-                math.hypot(
-                    fx - st.female_x,
-                    fy - st.female_y,
-                )
-                <= 24.0
-                and st.female_hunger > 0.18
-            ):
-                st.female_hunger = _clamp(
-                    st.female_hunger - 0.15
-                )
-                st.female_food_eaten += 1
-                st.female_dopamine = 1.0
-                st.female_reward_events += 1
-                self.food.pop(i)
-                self._last_food_distance = (
-                    self.nearest_food_distance()
-                )
-                return True
-        return False
+                for other in (
+                    self.people.values()
+                ):
+                    other.last_food_distance = (
+                        self.nearest_food_distance(
+                            other.person_id
+                        )
+                    )
+                break
 
-    def update_body(self, dt: float) -> str | None:
-        st = self.state
-        self._dopamine_signal = 0.0
-        self._pain_signal = 0.0
-        self._signal_reasons.clear()
+        self.sync_snapshot()
+        return events
 
-        st.age_seconds += dt
-        st.hunger = _clamp(
-            st.hunger + 0.0032 * dt
-        )
-        st.fatigue = _clamp(
-            st.fatigue + 0.0018 * dt
-        )
-        st.social_drive = _clamp(
-            st.social_drive + 0.0008 * dt
-        )
-        st.dopamine = _clamp(
-            st.dopamine - 0.85 * dt
-        )
-        st.pain = _clamp(
-            st.pain - 0.70 * dt
-        )
-
-        current_food_distance = (
-            self.nearest_food_distance()
-        )
-        if (
-            current_food_distance is not None
-            and self._last_food_distance is not None
-        ):
-            progress = (
-                self._last_food_distance
-                - current_food_distance
-            )
-            if (
-                progress > 0.25
-                and st.hunger > 0.32
-            ):
-                shaping = (
-                    min(0.028, progress * 0.0075)
-                    * (0.35 + 0.65 * st.hunger)
-                )
-                self.pulse_dopamine(
-                    shaping,
-                    "approach_bread",
-                )
-        self._last_food_distance = (
-            current_food_distance
-        )
-
-        hunger_pain = _clamp(
-            (st.hunger - 0.50) / 0.50
-        )
-        if hunger_pain > 0.0:
-            self._pain_signal += (
-                hunger_pain * dt * 0.60
-            )
-            st.pain = max(
-                st.pain,
-                hunger_pain,
-            )
-            self._signal_reasons.append(
-                "pain:hunger"
-            )
-
-        if self._eat_for_male():
-            return "male_ate"
-
-        if self._eat_for_female():
+    def update_body(
+        self,
+        dt: float,
+    ) -> str | None:
+        events = self.update_people(dt)
+        if not events:
+            return None
+        event = events[0]
+        if event["gender"] == "female":
             return "female_ate"
-
-        return None
+        return "male_ate"
 
     def apply_motor(
         self,
@@ -515,83 +1259,313 @@ class CyberFlyWorld:
         turn: float,
         backward: float,
         escape: float,
+        person_id: str | None = None,
     ) -> bool:
-        st = self.state
+        pid = self._resolve_person_id(
+            person_id
+        )
+        person = self.people[pid]
+
         energy_scale = (
-            1.0 - 0.58 * st.fatigue
+            1.0
+            - 0.58
+            * person.fatigue
+        )
+        gender_speed = (
+            self.FEMALE_SPEED_MULTIPLIER
+            if person.gender
+            == "female"
+            else 1.0
         )
 
         speed = (
-            10.0
-            + 58.0 * _clamp(forward)
-            - 38.0 * _clamp(backward)
-        ) * energy_scale
-        speed += 78.0 * _clamp(escape)
+            (
+                10.0
+                + 58.0
+                * _clamp(forward)
+                - 38.0
+                * _clamp(backward)
+            )
+            * energy_scale
+            * gender_speed
+        )
+        speed += (
+            78.0
+            * _clamp(escape)
+            * gender_speed
+        )
 
         turn_rate = (
             math.radians(110.0)
-            * max(-1.0, min(1.0, turn))
+            * max(
+                -1.0,
+                min(1.0, turn),
+            )
         )
-        st.heading = _wrap_angle(
-            st.heading + turn_rate * dt
+        person.heading = _wrap_angle(
+            person.heading
+            + turn_rate * dt
         )
 
-        old_x, old_y = st.x, st.y
-        st.x += (
-            math.cos(st.heading) * speed * dt
+        old_x = person.x
+        old_y = person.y
+
+        person.x += (
+            math.cos(person.heading)
+            * speed
+            * dt
         )
-        st.y += (
-            math.sin(st.heading) * speed * dt
+        person.y += (
+            math.sin(person.heading)
+            * speed
+            * dt
         )
 
         bounced = False
         margin = 22.0
 
         if (
-            st.x < margin
-            or st.x > self.width - margin
+            person.x < margin
+            or person.x
+            > self.width - margin
         ):
-            st.x = max(
+            person.x = max(
                 margin,
-                min(self.width - margin, st.x),
+                min(
+                    self.width - margin,
+                    person.x,
+                ),
             )
-            st.heading = math.pi - st.heading
+            person.heading = (
+                math.pi
+                - person.heading
+            )
             bounced = True
 
         if (
-            st.y < margin
-            or st.y > self.height - margin
+            person.y < margin
+            or person.y
+            > self.height - margin
         ):
-            st.y = max(
+            person.y = max(
                 margin,
-                min(self.height - margin, st.y),
+                min(
+                    self.height - margin,
+                    person.y,
+                ),
             )
-            st.heading = -st.heading
+            person.heading = (
+                -person.heading
+            )
             bounced = True
 
         if bounced:
-            st.fatigue = _clamp(
-                st.fatigue + 0.018
+            person.fatigue = _clamp(
+                person.fatigue
+                + 0.018
             )
             self.pulse_pain(
+                pid,
                 1.0,
                 "boundary_collision",
                 count_event=True,
             )
 
         moved = math.hypot(
-            st.x - old_x,
-            st.y - old_y,
+            person.x - old_x,
+            person.y - old_y,
         )
-        self.male_speed = (
-            moved / max(dt, 1e-6)
+        person.speed = (
+            moved
+            / max(dt, 1e-6)
         )
-        self.male_walk_phase += moved * 0.24
+        person.walk_phase += (
+            moved * 0.24
+        )
 
+        self.sync_snapshot()
         return bounced
 
-    def rest(self, dt: float) -> None:
-        self.state.fatigue = _clamp(
-            self.state.fatigue - 0.06 * dt
+    def rest(
+        self,
+        dt: float,
+        person_id: str | None = None,
+    ) -> None:
+        pid = self._resolve_person_id(
+            person_id
         )
-        self.male_speed = 0.0
+        person = self.people[pid]
+        person.fatigue = _clamp(
+            person.fatigue
+            - 0.06 * dt
+        )
+        person.speed = 0.0
+        self.sync_snapshot()
+
+    def closest_pair(
+        self,
+    ) -> tuple[
+        str,
+        str,
+        float,
+    ] | None:
+        ids = self.person_ids()
+        if len(ids) < 2:
+            return None
+
+        best: tuple[
+            str,
+            str,
+            float,
+        ] | None = None
+
+        for i, pid_a in enumerate(ids):
+            a = self.people[pid_a]
+            for pid_b in ids[
+                i + 1:
+            ]:
+                b = self.people[pid_b]
+                distance = math.hypot(
+                    a.x - b.x,
+                    a.y - b.y,
+                )
+                if (
+                    best is None
+                    or distance
+                    < best[2]
+                ):
+                    best = (
+                        pid_a,
+                        pid_b,
+                        distance,
+                    )
+
+        return best
+
+    def population_averages(
+        self,
+    ) -> tuple[
+        float,
+        float,
+        float,
+    ]:
+        people = list(
+            self.people.values()
+        )
+        n = max(
+            1,
+            len(people),
+        )
+        return (
+            sum(
+                p.hunger
+                for p in people
+            )
+            / n,
+            sum(
+                p.fatigue
+                for p in people
+            )
+            / n,
+            sum(
+                p.social_drive
+                for p in people
+            )
+            / n,
+        )
+
+    def sync_snapshot(self) -> None:
+        self.state.people = [
+            person.to_dict()
+            for person
+            in self.people.values()
+        ]
+
+        first_male = next(
+            (
+                p
+                for p in self.people.values()
+                if p.gender == "male"
+            ),
+            None,
+        )
+        first_female = next(
+            (
+                p
+                for p in self.people.values()
+                if p.gender == "female"
+            ),
+            None,
+        )
+
+        if first_male:
+            self.state.x = first_male.x
+            self.state.y = first_male.y
+            self.state.heading = (
+                first_male.heading
+            )
+            self.state.hunger = (
+                first_male.hunger
+            )
+            self.state.fatigue = (
+                first_male.fatigue
+            )
+            self.state.social_drive = (
+                first_male.social_drive
+            )
+            self.state.age_seconds = (
+                first_male.age_seconds
+            )
+            self.state.food_eaten = (
+                first_male.food_eaten
+            )
+            self.state.dopamine = (
+                first_male.dopamine
+            )
+            self.state.pain = (
+                first_male.pain
+            )
+            self.state.reward_events = (
+                first_male.reward_events
+            )
+            self.state.pain_events = (
+                first_male.pain_events
+            )
+
+        if first_female:
+            self.state.female_x = (
+                first_female.x
+            )
+            self.state.female_y = (
+                first_female.y
+            )
+            self.state.female_heading = (
+                first_female.heading
+            )
+            self.state.female_hunger = (
+                first_female.hunger
+            )
+            self.state.female_fatigue = (
+                first_female.fatigue
+            )
+            self.state.female_social_drive = (
+                first_female.social_drive
+            )
+            self.state.female_age_seconds = (
+                first_female.age_seconds
+            )
+            self.state.female_food_eaten = (
+                first_female.food_eaten
+            )
+            self.state.female_dopamine = (
+                first_female.dopamine
+            )
+            self.state.female_pain = (
+                first_female.pain
+            )
+            self.state.female_reward_events = (
+                first_female.reward_events
+            )
+            self.state.female_pain_events = (
+                first_female.pain_events
+            )
