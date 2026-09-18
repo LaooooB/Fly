@@ -33,13 +33,25 @@ SIM_SPEED_STEP = 0.5
 ADD_MALE_RECT = pygame.Rect(
     ARENA_W + PANEL_PAD,
     66,
-    116,
+    56,
+    34,
+)
+REMOVE_MALE_RECT = pygame.Rect(
+    ARENA_W + PANEL_PAD + 62,
+    66,
+    56,
     34,
 )
 ADD_FEMALE_RECT = pygame.Rect(
-    ARENA_W + PANEL_PAD + 128,
+    ARENA_W + PANEL_PAD + 124,
     66,
-    116,
+    56,
+    34,
+)
+REMOVE_FEMALE_RECT = pygame.Rect(
+    ARENA_W + PANEL_PAD + 186,
+    66,
+    56,
     34,
 )
 SPEED_RECT = pygame.Rect(
@@ -1607,14 +1619,28 @@ def _draw_panel(
     _draw_add_button(
         screen,
         ADD_MALE_RECT,
-        f"+ 男  {males}",
+        f"+男 {males}",
+        mouse_pos,
+        font_small,
+    )
+    _draw_add_button(
+        screen,
+        REMOVE_MALE_RECT,
+        "-男",
         mouse_pos,
         font_small,
     )
     _draw_add_button(
         screen,
         ADD_FEMALE_RECT,
-        f"+ 女  {females}",
+        f"+女 {females}",
+        mouse_pos,
+        font_small,
+    )
+    _draw_add_button(
+        screen,
+        REMOVE_FEMALE_RECT,
+        "-女",
         mouse_pos,
         font_small,
     )
@@ -2512,6 +2538,75 @@ def run() -> int:
                         )
                     continue
 
+
+                if (
+                    REMOVE_MALE_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    removed_id = world.remove_person(
+                        "male",
+                        preferred_id=(
+                            selected_person
+                            if (
+                                selected_person
+                                in world.people
+                                and world.people[
+                                    selected_person
+                                ].gender
+                                == "male"
+                            )
+                            else None
+                        ),
+                    )
+                    if removed_id is None:
+                        last_event_text = (
+                            "无法减少男性"
+                        )
+                    else:
+                        learner.forget_agent(
+                            removed_id
+                        )
+                        sleeping_ids.discard(
+                            removed_id
+                        )
+                        hunger_pain_active.discard(
+                            removed_id
+                        )
+                        collision_cooldowns.pop(
+                            removed_id,
+                            None,
+                        )
+                        biases.pop(
+                            removed_id,
+                            None,
+                        )
+                        if (
+                            selected_person
+                            == removed_id
+                        ):
+                            living = (
+                                world.living_ids()
+                            )
+                            if living:
+                                selected_person = (
+                                    living[0]
+                                )
+                        store.append_episode(
+                            "remove_person",
+                            0.1,
+                            {
+                                "gender": "male",
+                                "person_id": (
+                                    removed_id
+                                ),
+                            },
+                        )
+                        last_event_text = (
+                            "已减少男性"
+                        )
+                    continue
+
                 if (
                     ADD_FEMALE_RECT.collidepoint(
                         event.pos
@@ -2542,6 +2637,75 @@ def run() -> int:
                         )
                         last_event_text = (
                             "已增加女性"
+                        )
+                    continue
+
+
+                if (
+                    REMOVE_FEMALE_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    removed_id = world.remove_person(
+                        "female",
+                        preferred_id=(
+                            selected_person
+                            if (
+                                selected_person
+                                in world.people
+                                and world.people[
+                                    selected_person
+                                ].gender
+                                == "female"
+                            )
+                            else None
+                        ),
+                    )
+                    if removed_id is None:
+                        last_event_text = (
+                            "无法减少女性"
+                        )
+                    else:
+                        learner.forget_agent(
+                            removed_id
+                        )
+                        sleeping_ids.discard(
+                            removed_id
+                        )
+                        hunger_pain_active.discard(
+                            removed_id
+                        )
+                        collision_cooldowns.pop(
+                            removed_id,
+                            None,
+                        )
+                        biases.pop(
+                            removed_id,
+                            None,
+                        )
+                        if (
+                            selected_person
+                            == removed_id
+                        ):
+                            living = (
+                                world.living_ids()
+                            )
+                            if living:
+                                selected_person = (
+                                    living[0]
+                                )
+                        store.append_episode(
+                            "remove_person",
+                            0.1,
+                            {
+                                "gender": "female",
+                                "person_id": (
+                                    removed_id
+                                ),
+                            },
+                        )
+                        last_event_text = (
+                            "已减少女性"
                         )
                     continue
 

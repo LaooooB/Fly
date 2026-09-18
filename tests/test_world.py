@@ -395,3 +395,68 @@ def test_collision_pain_is_strong():
     assert bounced is True
     assert pain >= 2.0
     assert "pain:boundary_collision" in reasons
+
+
+
+def test_remove_person_prefers_selected_same_gender_and_keeps_shared_world():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(60),
+    )
+    male_2 = world.add_person("male")
+    male_3 = world.add_person("male")
+
+    removed = world.remove_person(
+        "male",
+        preferred_id=male_2,
+    )
+
+    assert removed == male_2
+    assert male_2 not in world.people
+    assert male_3 in world.people
+    assert world.population_counts() == (2, 1)
+
+
+def test_remove_gender_can_reach_zero_and_persist_in_population_snapshot():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(61),
+    )
+
+    removed = world.remove_person("female")
+
+    assert removed is not None
+    assert world.population_counts() == (1, 0)
+    assert all(
+        person["gender"] != "female"
+        for person in world.state.people
+    )
+
+    restored = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(62),
+        snapshot=world.state,
+    )
+    assert restored.population_counts() == (1, 0)
+
+
+def test_remove_person_never_removes_last_living_person():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(63),
+    )
+    world.remove_person("female")
+
+    only_male = world._resolve_person_id("male")
+    removed = world.remove_person(
+        "male",
+        preferred_id=only_male,
+    )
+
+    assert removed is None
+    assert world.living_count() == 1
+    assert only_male in world.people
