@@ -105,3 +105,54 @@ def test_neural_intent_can_be_reproduction_driven():
 
     assert intent.dominant == "繁衍"
     assert intent.scores["繁衍"] > intent.scores["进食"]
+
+
+
+def test_user_command_changes_interpreted_intent_without_hardcoded_event_text():
+    world, male = _view()
+    male.hunger = 0.35
+    male.pain = 0.0
+    male.mood = 0.4
+    view = world.person_view(
+        male.person_id
+    )
+
+    no_command = interpret_neural_intent(
+        view,
+        Sensors(
+            game_odor=0.55,
+            game_left=0.4,
+            game_right=0.5,
+        ),
+        BrainOutputs(
+            forward=0.25,
+            escape=0.0,
+            courtship=0.0,
+        ),
+        LearningBias(),
+    )
+    with_command = interpret_neural_intent(
+        view,
+        Sensors(
+            game_odor=0.55,
+            game_left=0.4,
+            game_right=0.5,
+        ),
+        BrainOutputs(
+            forward=0.25,
+            escape=0.0,
+            courtship=0.0,
+        ),
+        LearningBias(),
+        command_goal="game",
+        command_strength=0.9,
+    )
+
+    assert (
+        with_command.scores["娱乐"]
+        > no_command.scores["娱乐"]
+    )
+    assert (
+        with_command.raw["指令影响"]
+        == 0.9
+    )

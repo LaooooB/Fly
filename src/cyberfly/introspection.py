@@ -32,6 +32,8 @@ def interpret_neural_intent(
     sensors: Sensors,
     outputs: BrainOutputs,
     bias: LearningBias,
+    command_goal: str | None = None,
+    command_strength: float = 0.0,
 ) -> NeuralIntent:
     food_signal = max(
         sensors.food_odor,
@@ -136,6 +138,27 @@ def interpret_neural_intent(
         "休息": rest,
         "探索": explore,
     }
+
+    command_map = {
+        "food": "进食",
+        "game": "娱乐",
+        "mate": "繁衍",
+        "avoid": "避痛",
+        "rest": "休息",
+        "explore": "探索",
+    }
+    command_key = command_map.get(
+        command_goal or ""
+    )
+    applied_command = _clamp(
+        command_strength
+    )
+    if command_key:
+        scores[command_key] = _clamp(
+            scores[command_key]
+            + 0.55
+            * applied_command
+        )
     dominant = max(
         scores,
         key=scores.get,
@@ -196,6 +219,7 @@ def interpret_neural_intent(
         "逃逸神经": _clamp(outputs.escape),
         "求偶神经": _clamp(outputs.courtship),
         "策略置信": _clamp(bias.confidence),
+        "指令影响": applied_command,
     }
 
     return NeuralIntent(
