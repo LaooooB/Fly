@@ -437,18 +437,6 @@ class CyberFlyWorld:
             self.people[male.person_id] = male
             self.people[female.person_id] = female
 
-        if not any(
-            p.gender == "male"
-            for p in self.people.values()
-        ):
-            self.add_person("male")
-
-        if not any(
-            p.gender == "female"
-            for p in self.people.values()
-        ):
-            self.add_person("female")
-
     def _unique_id(
         self,
         requested: str,
@@ -552,6 +540,53 @@ class CyberFlyWorld:
         ] = person
         self.sync_snapshot()
         return person_id
+
+    def remove_person(
+        self,
+        gender: str,
+        preferred_id: str | None = None,
+    ) -> str | None:
+        gender = str(gender).lower()
+        if gender not in {
+            "male",
+            "female",
+        }:
+            raise ValueError(
+                "gender must be male or female"
+            )
+
+        living = self.living_ids()
+        if len(living) <= 1:
+            return None
+
+        candidates = [
+            pid
+            for pid in living
+            if self.people[pid].gender
+            == gender
+        ]
+        if not candidates:
+            return None
+
+        if (
+            preferred_id in candidates
+        ):
+            target_id = str(
+                preferred_id
+            )
+        else:
+            target_id = candidates[-1]
+
+        self.people.pop(
+            target_id,
+            None,
+        )
+        self._signals.pop(
+            target_id,
+            None,
+        )
+        self.sync_snapshot()
+        return target_id
 
     def person_ids(
         self,
