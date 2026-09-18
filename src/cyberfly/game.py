@@ -1720,13 +1720,15 @@ def _draw_panel(
         stats_card,
         (
             (
-                "年龄",
-                f"{view.age_seconds / 60.0:.1f}分",
+                "性行为",
+                str(
+                    view.sex_events
+                ),
             ),
             (
-                "面包",
+                "后代",
                 str(
-                    view.food_eaten
+                    view.offspring_count
                 ),
             ),
             (
@@ -1983,9 +1985,10 @@ def _draw_panel(
         )
         intent_action = (
             f"动作 {neural_intent.action} · "
-            f"进食 {int(neural_intent.scores['进食'] * 100)} "
-            f"避痛 {int(neural_intent.scores['避痛'] * 100)} "
-            f"繁衍 {int(neural_intent.scores['繁衍'] * 100)}"
+            f"饿 {int(neural_intent.raw['饥饿'] * 100)} "
+            f"痛 {int(neural_intent.raw['疼痛'] * 100)} "
+            f"繁衍 {int(neural_intent.scores['繁衍'] * 100)} "
+            f"娱乐 {int(neural_intent.scores['娱乐'] * 100)}"
         )
         _text(
             screen,
