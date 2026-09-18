@@ -1,0 +1,1 @@
+"""MaleCNS CyberPet package."""
