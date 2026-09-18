@@ -33,8 +33,18 @@ class Sensors:
 
 
 class CyberFlyWorld:
-    def __init__(self, width: int = 1100, height: int = 700,
-                 rng: random.Random | None = None, snapshot: PetSnapshot | None = None):
+    """2D body/world around the fixed MaleCNS controller.
+
+    The public class name is kept for save/package compatibility. The rendered avatar can be human.
+    """
+
+    def __init__(
+        self,
+        width: int = 1100,
+        height: int = 700,
+        rng: random.Random | None = None,
+        snapshot: PetSnapshot | None = None,
+    ):
         self.width = width
         self.height = height
         self.rng = rng or random.Random()
@@ -43,15 +53,21 @@ class CyberFlyWorld:
         self.mate = [width * 0.75, height * 0.5]
         self.mate_heading = math.pi
         self._mate_turn_timer = 0.0
+        self._dopamine_signal = 0.0
+        self._pain_signal = 0.0
+        self._signal_reasons: list[str] = []
+        self._last_food_distance: float | None = None
         self._spawn_food(7)
 
     def _spawn_food(self, count: int = 1) -> None:
         margin = 55
         for _ in range(count):
-            self.food.append((
-                self.rng.uniform(margin, self.width - margin),
-                self.rng.uniform(margin, self.height - margin),
-            ))
+            self.food.append(
+                (
+                    self.rng.uniform(margin, self.width - margin),
+                    self.rng.uniform(margin, self.height - margin),
+                )
+            )
 
     def _relative_side(self, tx: float, ty: float) -> tuple[float, float, float]:
         dx = tx - self.state.x
@@ -59,29 +75,84 @@ class CyberFlyWorld:
         distance = max(1e-6, math.hypot(dx, dy))
         target_angle = math.atan2(dy, dx)
         rel = _wrap_angle(target_angle - self.state.heading)
-        # screen coordinates: negative relative angle is visually above/left of heading
-        left = _clamp((-rel / math.pi + 1.0) * 0.5) if rel < 0 else _clamp(0.5 - rel / math.pi)
-        right = _clamp((rel / math.pi + 1.0) * 0.5) if rel > 0 else _clamp(0.5 + rel / math.pi)
+        left = (
+            _clamp((-rel / math.pi + 1.0) * 0.5)
+            if rel < 0
+            else _clamp(0.5 - rel / math.pi)
+        )
+        right = (
+            _clamp((rel / math.pi + 1.0) * 0.5)
+            if rel > 0
+            else _clamp(0.5 + rel / math.pi)
+        )
         if abs(rel) < 0.05:
             left = right = 0.5
         return distance, left, right
 
-    def _nearest(self, points: list[tuple[float, float]] | list[list[float]]) -> tuple[float, float] | None:
+    def _nearest(
+        self, points: list[tuple[float, float]] | list[list[float]]
+    ) -> tuple[float, float] | None:
         if not points:
             return None
-        return min(points, key=lambda p: (p[0] - self.state.x) ** 2 + (p[1] - self.state.y) ** 2)
+        return min(
+            points,
+            key=lambda p: (p[0] - self.state.x) ** 2 + (p[1] - self.state.y) ** 2,
+        )
+
+    def nearest_food_distance(self) -> float | None:
+        nearest = self._nearest(self.food)
+        if nearest is None:
+            return None
+        return math.hypot(nearest[0] - self.state.x, nearest[1] - self.state.y)
+
+    def pulse_dopamine(
+        self, amount: float, reason: str, count_event: bool = False
+    ) -> None:
+        amount = max(0.0, float(amount))
+        if amount <= 0.0:
+            return
+        self._dopamine_signal = min(1.5, self._dopamine_signal + amount)
+        self.state.dopamine = max(self.state.dopamine, _clamp(amount * 7.0))
+        if reason:
+            self._signal_reasons.append(f"dopamine:{reason}")
+        if count_event:
+            self.state.reward_events += 1
+
+    def pulse_pain(self, amount: float, reason: str, count_event: bool = False) -> None:
+        amount = max(0.0, float(amount))
+        if amount <= 0.0:
+            return
+        self._pain_signal = min(1.5, self._pain_signal + amount)
+        self.state.pain = max(self.state.pain, _clamp(amount * 5.0))
+        if reason:
+            self._signal_reasons.append(f"pain:{reason}")
+        if count_event:
+            self.state.pain_events += 1
+
+    def consume_learning_signal(self) -> tuple[float, float, tuple[str, ...]]:
+        dopamine = self._dopamine_signal
+        pain = self._pain_signal
+        reasons = tuple(self._signal_reasons)
+        self._dopamine_signal = 0.0
+        self._pain_signal = 0.0
+        self._signal_reasons.clear()
+        return dopamine, pain, reasons
 
     def sense(self) -> Sensors:
         s = Sensors()
         nearest_food = self._nearest(self.food)
         if nearest_food:
             dist, left, right = self._relative_side(nearest_food[0], nearest_food[1])
-            s.food_odor = _clamp((1.0 - dist / 420.0) * (0.35 + 0.65 * self.state.hunger))
+            s.food_odor = _clamp(
+                (1.0 - dist / 420.0) * (0.35 + 0.65 * self.state.hunger)
+            )
             s.food_left = s.food_odor * left
             s.food_right = s.food_odor * right
 
         dist, left, right = self._relative_side(self.mate[0], self.mate[1])
-        s.mate_visual = _clamp((1.0 - dist / 500.0) * (0.35 + 0.65 * self.state.social_drive))
+        s.mate_visual = _clamp(
+            (1.0 - dist / 500.0) * (0.35 + 0.65 * self.state.social_drive)
+        )
         s.mate_left = s.mate_visual * left
         s.mate_right = s.mate_visual * right
 
@@ -90,7 +161,6 @@ class CyberFlyWorld:
         right_wall = self.width - self.state.x
         top_wall = self.state.y
         bottom_wall = self.height - self.state.y
-        # coarse egocentric looming: compare two rays offset from heading.
         for sign, attr in [(-1.0, "loom_left"), (1.0, "loom_right")]:
             a = self.state.heading + sign * 0.55
             ray_dx, ray_dy = math.cos(a), math.sin(a)
@@ -132,33 +202,65 @@ class CyberFlyWorld:
 
     def update_body(self, dt: float) -> str | None:
         st = self.state
+        self._dopamine_signal = 0.0
+        self._pain_signal = 0.0
+        self._signal_reasons.clear()
+
         st.age_seconds += dt
         st.hunger = _clamp(st.hunger + 0.0032 * dt)
         st.fatigue = _clamp(st.fatigue + 0.0018 * dt)
         st.social_drive = _clamp(st.social_drive + 0.0008 * dt)
+        st.dopamine = _clamp(st.dopamine - 0.85 * dt)
+        st.pain = _clamp(st.pain - 0.70 * dt)
+
+        current_food_distance = self.nearest_food_distance()
+        if current_food_distance is not None and self._last_food_distance is not None:
+            progress = self._last_food_distance - current_food_distance
+            if progress > 0.25 and st.hunger > 0.32:
+                shaping = min(0.028, progress * 0.0075) * (
+                    0.35 + 0.65 * st.hunger
+                )
+                self.pulse_dopamine(shaping, "approach_bread")
+        self._last_food_distance = current_food_distance
+
+        hunger_pain = _clamp((st.hunger - 0.50) / 0.50)
+        if hunger_pain > 0.0:
+            self._pain_signal += hunger_pain * dt * 0.60
+            st.pain = max(st.pain, hunger_pain)
+            self._signal_reasons.append("pain:hunger")
 
         eaten_index = None
         for i, (fx, fy) in enumerate(self.food):
-            if math.hypot(fx - st.x, fy - st.y) <= 20.0 and st.hunger > 0.18:
+            if math.hypot(fx - st.x, fy - st.y) <= 24.0 and st.hunger > 0.18:
                 eaten_index = i
                 spot = [round(fx, 2), round(fy, 2)]
                 if spot not in st.known_food_spots:
                     st.known_food_spots.append(spot)
                     st.known_food_spots = st.known_food_spots[-32:]
-                st.hunger = _clamp(st.hunger - 0.48)
+                st.hunger = _clamp(st.hunger - 0.52)
                 st.food_eaten += 1
+                self.pulse_dopamine(1.0, "ate_bread", count_event=True)
                 break
         if eaten_index is not None:
             self.food.pop(eaten_index)
             self._spawn_food(1)
+            self._last_food_distance = self.nearest_food_distance()
             return "ate"
         return None
 
-    def apply_motor(self, dt: float, forward: float, turn: float,
-                    backward: float, escape: float) -> None:
+    def apply_motor(
+        self,
+        dt: float,
+        forward: float,
+        turn: float,
+        backward: float,
+        escape: float,
+    ) -> bool:
         st = self.state
         energy_scale = 1.0 - 0.58 * st.fatigue
-        speed = (18.0 + 92.0 * _clamp(forward) - 70.0 * _clamp(backward)) * energy_scale
+        speed = (
+            18.0 + 92.0 * _clamp(forward) - 70.0 * _clamp(backward)
+        ) * energy_scale
         speed += 150.0 * _clamp(escape)
         turn_rate = math.radians(125.0) * max(-1.0, min(1.0, turn))
         st.heading = _wrap_angle(st.heading + turn_rate * dt)
@@ -175,7 +277,9 @@ class CyberFlyWorld:
             st.heading = -st.heading
             bounced = True
         if bounced:
-            st.fatigue = _clamp(st.fatigue + 0.005)
+            st.fatigue = _clamp(st.fatigue + 0.018)
+            self.pulse_pain(1.0, "boundary_collision", count_event=True)
+        return bounced
 
     def rest(self, dt: float) -> None:
         self.state.fatigue = _clamp(self.state.fatigue - 0.06 * dt)
