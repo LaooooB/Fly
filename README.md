@@ -1,6 +1,12 @@
-# MaleCNS CyberPet v0.1
+# MaleCNS Human Avatar CyberPet v0.2
 
-一个可以在 Windows 本地养的 2D 赛博雄性果蝇。控制核心通过 `flybrain 0.1.0` 运行 **Janelia/FlyEM MaleCNS v1.0** 的完整 166,700 神经元连接组；安装器默认从 MaleCNS 官方公开数据构建本地脑缓存。
+一个可以在 Windows 本地养的 2D 赛博宠物。
+
+画面里的主体已经换成**人形角色**，食物换成**面包**；底层控制核心仍然通过 `flybrain 0.1.0` 运行 **Janelia/FlyEM MaleCNS v1.0** 的完整 166,700 神经元连接组。
+
+v0.2 新增了可持久化的快速强化学习层：接近/吃到面包会获得模拟多巴胺，挨饿和撞到边界会产生模拟疼痛，学习结果保存在 `J:\FLY\save\pet_state.json`，下次启动继续使用。
+
+> 这里的多巴胺和疼痛是程序强化信号，不代表真实生物神经递质或主观感受。人形只是外观，底层仍是 MaleCNS 果蝇连接组。
 
 ## 推荐目录
 
