@@ -248,3 +248,47 @@ def test_two_people_train_one_shared_q_table_twice():
     assert middle > before
     assert after > middle
     assert learner.active_agents == 2
+
+
+def test_terminal_death_penalty_is_stronger_and_does_not_bootstrap():
+    learner = FastValenceLearner(
+        rng=random.Random(30),
+        epsilon=0.0,
+    )
+    sensors = Sensors(
+        food_odor=0.8,
+        food_left=0.8,
+        food_right=0.1,
+    )
+    state = learner.state_key(
+        sensors,
+        hunger=1.0,
+    )
+    learner.q_table[state] = [
+        0.0,
+        0.7,
+        0.0,
+        0.0,
+        0.0,
+    ]
+    bias = learner.choose_bias(
+        sensors,
+        hunger=1.0,
+        dt=1.0,
+        agent_id="male_1",
+    )
+    idx = ACTIONS.index(bias.action)
+    before = learner.q_table[state][idx]
+
+    valence = learner.learn(
+        0.0,
+        2.0,
+        sensors,
+        hunger=1.0,
+        agent_id="male_1",
+        terminal=True,
+    )
+    after = learner.q_table[state][idx]
+
+    assert valence == -2.0
+    assert after < before
