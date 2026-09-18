@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Local MaleCNS/runtime data
+male_cns_data/
+save/
+*.npz
+*.feather
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
