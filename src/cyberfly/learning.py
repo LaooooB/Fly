@@ -57,7 +57,7 @@ class FastValenceLearner:
             ):
                 continue
             self.q_table[key] = [
-                _clamp(v, -2.0, 2.0)
+                _clamp(v, -3.0, 2.0)
                 for v in values
             ]
 
