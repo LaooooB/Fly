@@ -11,6 +11,7 @@ import time
 import pygame
 
 from .brain_adapter import BrainOutputs, MaleCNSBrain
+from .introspection import NeuralIntent, interpret_neural_intent
 from .items import get_item, search_items
 from .learning import FastValenceLearner, LearningBias
 from .memory import MemoryStore
@@ -396,6 +397,8 @@ def _person_at(
         view = world.person_view(
             person_id
         )
+        if not view.alive:
+            continue
         if (
             _person_hit_rect(
                 view
@@ -1228,6 +1231,8 @@ def _draw_arena(
         view = world.person_view(
             person_id
         )
+        if not view.alive:
+            continue
         _draw_person(
             screen,
             view,
@@ -1496,6 +1501,7 @@ def _draw_panel(
     search_active: bool,
     search_text: str,
     last_event_text: str,
+    neural_intent: NeuralIntent | None,
     mouse_pos: tuple[int, int],
     font_small: pygame.font.Font,
     font: pygame.font.Font,
@@ -1959,10 +1965,10 @@ def _draw_panel(
 
     event_card = pygame.Rect(
         x,
-        680,
+        676,
         PANEL_W
         - PANEL_PAD * 2,
-        42,
+        50,
     )
     pygame.draw.rect(
         screen,
@@ -1970,31 +1976,42 @@ def _draw_panel(
         event_card,
         border_radius=12,
     )
-    pygame.draw.circle(
-        screen,
-        ACCENT,
-        (
-            event_card.x + 16,
-            event_card.centery,
-        ),
-        4,
-    )
-    event_img = (
-        font_small.render(
-            last_event_text,
-            True,
+    if neural_intent is not None:
+        intent_title = (
+            f"神经意图  {neural_intent.dominant} "
+            f"{int(neural_intent.confidence * 100)}%"
+        )
+        intent_action = (
+            f"动作 {neural_intent.action} · "
+            f"进食 {int(neural_intent.scores['进食'] * 100)} "
+            f"避痛 {int(neural_intent.scores['避痛'] * 100)} "
+            f"繁衍 {int(neural_intent.scores['繁衍'] * 100)}"
+        )
+        _text(
+            screen,
+            font_small,
+            intent_title,
+            event_card.x + 12,
+            event_card.y + 7,
             TEXT,
         )
-    )
-    screen.blit(
-        event_img,
-        (
-            event_card.x + 28,
-            event_card.centery
-            - event_img.get_height()
-            // 2,
-        ),
-    )
+        _text(
+            screen,
+            font_small,
+            intent_action,
+            event_card.x + 12,
+            event_card.y + 27,
+            MUTED,
+        )
+    else:
+        _text(
+            screen,
+            font_small,
+            last_event_text,
+            event_card.x + 12,
+            event_card.y + 16,
+            MUTED,
+        )
 
     footer = (
         "点击人物切换  ·  Q 退出"
@@ -2465,9 +2482,7 @@ def run() -> int:
                     )
                 ):
                     if (
-                        len(
-                            world.person_ids()
-                        )
+                        world.living_count()
                         >= MAX_PEOPLE
                     ):
                         last_event_text = (
@@ -2500,9 +2515,7 @@ def run() -> int:
                     )
                 ):
                     if (
-                        len(
-                            world.person_ids()
-                        )
+                        world.living_count()
                         >= MAX_PEOPLE
                     ):
                         last_event_text = (
@@ -2676,7 +2689,10 @@ def run() -> int:
                             f"{item.name}"
                         )
 
-                    placing_item_id = None
+                    last_event_text = (
+                        f"连续放置 "
+                        f"{item.name if item else '物品'}"
+                    )
                     continue
 
                 if mx < ARENA_W:
@@ -2845,6 +2861,37 @@ def run() -> int:
 
                 if not view.alive:
                     continue
+
+                sensors = sensors_by_id[
+                    pid
+                ]
+                wall_warning = _clamp(
+                    (
+                        max(
+                            sensors.loom_left,
+                            sensors.loom_right,
+                        )
+                        - 0.12
+                    )
+                    / 0.88
+                )
+                if wall_warning > 0.0:
+                    world.pulse_pain(
+                        pid,
+                        wall_warning
+                        * 0.75
+                        * dt,
+                        "wall_warning",
+                    )
+                    (
+                        extra_dopamine,
+                        extra_pain,
+                        _,
+                    ) = world.consume_learning_signal(
+                        pid
+                    )
+                    dopamine_signal += extra_dopamine
+                    pain_signal += extra_pain
 
                 learner.learn(
                     dopamine_signal,
@@ -3086,48 +3133,37 @@ def run() -> int:
                             f"{view.name} 撞到边界"
                         )
 
-            closest = (
-                world.closest_pair()
+            sex_events = world.try_sex(
+                outputs.courtship,
+                max_people=MAX_PEOPLE,
             )
-            if (
-                closest
-                and outputs.courtship
-                > 0.22
-                and closest[2] < 58
-                and social_cooldown
-                <= 0.0
-            ):
-                social_cooldown = 8.0
-                pid_a, pid_b, distance = (
-                    closest
-                )
-                world.pulse_dopamine(
-                    pid_a,
-                    0.55,
-                    "social_contact",
-                    count_event=True,
-                )
-                world.pulse_dopamine(
-                    pid_b,
-                    0.55,
-                    "social_contact",
-                    count_event=True,
-                )
-                store.append_episode(
-                    "social_contact",
-                    0.7,
-                    {
-                        "person_a": pid_a,
-                        "person_b": pid_b,
-                        "distance": round(
-                            distance,
-                            2,
-                        ),
-                    },
-                )
-                last_event_text = (
-                    "社交奖励"
-                )
+            for sex_event in sex_events:
+                if sex_event["kind"] == "sex":
+                    store.append_episode(
+                        "sex",
+                        1.0,
+                        {
+                            "person_a": sex_event["person_a"],
+                            "person_b": sex_event["person_b"],
+                            "distance": round(
+                                sex_event["distance"],
+                                2,
+                            ),
+                        },
+                    )
+                    last_event_text = "发生性行为"
+                elif sex_event["kind"] == "offspring":
+                    store.append_episode(
+                        "offspring",
+                        1.0,
+                        {
+                            "child_id": sex_event["child_id"],
+                            "gender": sex_event["gender"],
+                            "parent_a": sex_event["parent_a"],
+                            "parent_b": sex_event["parent_b"],
+                        },
+                    )
+                    last_event_text = "繁衍成功"
 
             if (
                 outputs.escape > 0.55
@@ -3173,6 +3209,13 @@ def run() -> int:
             update_learning_history()
             sync_learning_state()
 
+            live_ids_now = world.living_ids()
+            if (
+                selected_person not in live_ids_now
+                and live_ids_now
+            ):
+                selected_person = live_ids_now[0]
+
             if (
                 time.monotonic()
                 - last_save
@@ -3206,9 +3249,34 @@ def run() -> int:
             if (
                 selected_person
                 not in world.people
+                and world.person_ids()
             ):
                 selected_person = (
                     world.person_ids()[0]
+                )
+
+            selected_intent = None
+            if (
+                selected_person in world.people
+                and world.person_view(
+                    selected_person
+                ).alive
+            ):
+                selected_view = world.person_view(
+                    selected_person
+                )
+                selected_sensors = world.sense(
+                    selected_person
+                )
+                selected_bias = biases.get(
+                    selected_person,
+                    LearningBias(),
+                )
+                selected_intent = interpret_neural_intent(
+                    selected_view,
+                    selected_sensors,
+                    outputs,
+                    selected_bias,
                 )
 
             _draw_arena(
@@ -3240,6 +3308,7 @@ def run() -> int:
                 search_active,
                 search_text,
                 last_event_text,
+                selected_intent,
                 mouse_pos,
                 font_small,
                 font,
