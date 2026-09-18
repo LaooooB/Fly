@@ -33,11 +33,6 @@ class Sensors:
 
 
 class CyberFlyWorld:
-    """2D body/world around the fixed MaleCNS controller.
-
-    The public class name is kept for save/package compatibility. The rendered avatar can be human.
-    """
-
     def __init__(
         self,
         width: int = 1100,
@@ -57,17 +52,15 @@ class CyberFlyWorld:
         self._pain_signal = 0.0
         self._signal_reasons: list[str] = []
         self._last_food_distance: float | None = None
-        self._spawn_food(7)
 
-    def _spawn_food(self, count: int = 1) -> None:
-        margin = 55
-        for _ in range(count):
-            self.food.append(
-                (
-                    self.rng.uniform(margin, self.width - margin),
-                    self.rng.uniform(margin, self.height - margin),
-                )
-            )
+    def place_food(self, x: float, y: float) -> tuple[float, float]:
+        margin = 28.0
+        px = max(margin, min(self.width - margin, float(x)))
+        py = max(margin, min(self.height - margin, float(y)))
+        point = (px, py)
+        self.food.append(point)
+        self._last_food_distance = self.nearest_food_distance()
+        return point
 
     def _relative_side(self, tx: float, ty: float) -> tuple[float, float, float]:
         dx = tx - self.state.x
@@ -243,7 +236,6 @@ class CyberFlyWorld:
                 break
         if eaten_index is not None:
             self.food.pop(eaten_index)
-            self._spawn_food(1)
             self._last_food_distance = self.nearest_food_distance()
             return "ate"
         return None
