@@ -14,7 +14,7 @@ from .brain_adapter import BrainOutputs, MaleCNSBrain
 from .items import get_item, search_items
 from .learning import FastValenceLearner, LearningBias
 from .memory import MemoryStore
-from .world import CyberFlyWorld, PersonView
+from .world import CyberFlyWorld, PersonView, Sensors
 
 
 WIDTH, HEIGHT = 1180, 760
@@ -22,11 +22,25 @@ ARENA_W = 900
 PANEL_W = WIDTH - ARENA_W
 FPS = 60
 AUTOSAVE_SECONDS = 30.0
+MAX_PEOPLE = 12
 
 PANEL_PAD = 18
 SIM_SPEED_MIN = 1.0
 SIM_SPEED_MAX = 8.0
 SIM_SPEED_STEP = 0.5
+
+ADD_MALE_RECT = pygame.Rect(
+    ARENA_W + PANEL_PAD,
+    66,
+    116,
+    34,
+)
+ADD_FEMALE_RECT = pygame.Rect(
+    ARENA_W + PANEL_PAD + 128,
+    66,
+    116,
+    34,
+)
 SPEED_RECT = pygame.Rect(
     ARENA_W + PANEL_PAD,
     488,
@@ -96,15 +110,25 @@ def _snap_simulation_speed(
 def _speed_from_mouse_x(
     mouse_x: int,
 ) -> float:
-    span = max(1, SPEED_RECT.w - 18)
+    span = max(
+        1,
+        SPEED_RECT.w - 18,
+    )
     ratio = _clamp(
-        (mouse_x - SPEED_RECT.x - 9)
-        / span,
+        (
+            mouse_x
+            - SPEED_RECT.x
+            - 9
+        )
+        / span
     )
     return _snap_simulation_speed(
         SIM_SPEED_MIN
         + ratio
-        * (SIM_SPEED_MAX - SIM_SPEED_MIN)
+        * (
+            SIM_SPEED_MAX
+            - SIM_SPEED_MIN
+        )
     )
 
 
@@ -115,7 +139,10 @@ def _marker_path() -> Path:
             r"J:\FLY\male_cns_data",
         )
     )
-    return root / "OFFICIAL_MALECNS_BUILD_OK.json"
+    return (
+        root
+        / "OFFICIAL_MALECNS_BUILD_OK.json"
+    )
 
 
 def _ensure_verified_malecns() -> None:
@@ -144,8 +171,14 @@ def _font(
             bold=bold,
         )
         if path:
-            return pygame.font.Font(path, size)
-    return pygame.font.Font(None, size)
+            return pygame.font.Font(
+                path,
+                size,
+            )
+    return pygame.font.Font(
+        None,
+        size,
+    )
 
 
 def _text(
@@ -156,9 +189,16 @@ def _text(
     y: int,
     color=TEXT,
 ) -> pygame.Surface:
-    img = font.render(value, True, color)
-    screen.blit(img, (x, y))
-    return img
+    image = font.render(
+        value,
+        True,
+        color,
+    )
+    screen.blit(
+        image,
+        (x, y),
+    )
+    return image
 
 
 def _meter(
@@ -188,7 +228,8 @@ def _meter(
     screen.blit(
         pct,
         (
-            x + width - pct.get_width(),
+            x + width
+            - pct.get_width(),
             y,
         ),
     )
@@ -211,7 +252,13 @@ def _meter(
             (
                 track.x,
                 track.y,
-                max(4, int(track.w * value)),
+                max(
+                    4,
+                    int(
+                        track.w
+                        * value
+                    ),
+                ),
                 track.h,
             ),
             border_radius=4,
@@ -225,8 +272,10 @@ def _draw_speed_slider(
     mouse_pos: tuple[int, int],
     dragging: bool,
 ) -> None:
-    hovered = SPEED_RECT.collidepoint(
-        mouse_pos
+    hovered = (
+        SPEED_RECT.collidepoint(
+            mouse_pos
+        )
     )
     label = font.render(
         "模拟速度",
@@ -236,7 +285,11 @@ def _draw_speed_slider(
     value = font.render(
         f"{speed:g}×",
         True,
-        ACCENT if dragging else TEXT,
+        (
+            ACCENT
+            if dragging
+            else TEXT
+        ),
     )
     screen.blit(
         label,
@@ -269,12 +322,16 @@ def _draw_speed_slider(
 
     ratio = (
         (speed - SIM_SPEED_MIN)
-        / (SIM_SPEED_MAX - SIM_SPEED_MIN)
+        / (
+            SIM_SPEED_MAX
+            - SIM_SPEED_MIN
+        )
     )
     knob_x = int(
         track.x
         + track.w * ratio
     )
+
     if knob_x > track.x:
         pygame.draw.rect(
             screen,
@@ -332,19 +389,35 @@ def _person_at(
     candidates: list[
         tuple[float, str]
     ] = []
-    for person_id in ("male", "female"):
-        view = world.person_view(person_id)
-        if _person_hit_rect(view).collidepoint(point):
+
+    for person_id in (
+        world.person_ids()
+    ):
+        view = world.person_view(
+            person_id
+        )
+        if (
+            _person_hit_rect(
+                view
+            ).collidepoint(point)
+        ):
             distance = math.hypot(
                 point[0] - view.x,
                 point[1] - view.y,
             )
             candidates.append(
-                (distance, person_id)
+                (
+                    distance,
+                    person_id,
+                )
             )
+
     if not candidates:
         return None
-    candidates.sort(key=lambda row: row[0])
+
+    candidates.sort(
+        key=lambda row: row[0]
+    )
     return candidates[0][1]
 
 
@@ -355,26 +428,53 @@ def _outline_blit(
     color: tuple[int, int, int],
     thickness: int,
 ) -> None:
-    mask = pygame.mask.from_surface(base)
-    silhouette = mask.to_surface(
-        setcolor=(*color, 255),
-        unsetcolor=(0, 0, 0, 0),
+    mask = pygame.mask.from_surface(
+        base
     )
-    rect = base.get_rect(center=center)
+    silhouette = mask.to_surface(
+        setcolor=(
+            *color,
+            255,
+        ),
+        unsetcolor=(
+            0,
+            0,
+            0,
+            0,
+        ),
+    )
+    rect = base.get_rect(
+        center=center
+    )
     offsets = (
         (-thickness, 0),
         (thickness, 0),
         (0, -thickness),
         (0, thickness),
-        (-thickness, -thickness),
-        (thickness, -thickness),
-        (-thickness, thickness),
-        (thickness, thickness),
+        (
+            -thickness,
+            -thickness,
+        ),
+        (
+            thickness,
+            -thickness,
+        ),
+        (
+            -thickness,
+            thickness,
+        ),
+        (
+            thickness,
+            thickness,
+        ),
     )
     for ox, oy in offsets:
         screen.blit(
             silhouette,
-            rect.move(ox, oy),
+            rect.move(
+                ox,
+                oy,
+            ),
         )
 
 
@@ -382,7 +482,6 @@ def _person_surface(
     gender: str,
     walk_phase: float,
     moving: bool,
-    social: float = 0.0,
 ) -> pygame.Surface:
     surf = pygame.Surface(
         (92, 126),
@@ -391,7 +490,11 @@ def _person_surface(
     c = 46
 
     skin = (225, 184, 148)
-    skin_shadow = (197, 151, 119)
+    skin_shadow = (
+        197,
+        151,
+        119,
+    )
     hair = (
         (48, 38, 31)
         if gender == "male"
@@ -415,12 +518,20 @@ def _person_surface(
     shoe = (28, 31, 35)
 
     swing = (
-        math.sin(walk_phase) * 10.0
+        math.sin(
+            walk_phase
+        )
+        * 10.0
         if moving
         else 0.0
     )
     bob = (
-        abs(math.sin(walk_phase)) * 2.0
+        abs(
+            math.sin(
+                walk_phase
+            )
+        )
+        * 2.0
         if moving
         else 0.0
     )
@@ -470,7 +581,6 @@ def _person_surface(
         ),
         11,
     )
-
     pygame.draw.circle(
         surf,
         (48, 43, 40),
@@ -503,16 +613,19 @@ def _person_surface(
         1,
     )
 
-    shoulder_y = 48 - yoff
+    shoulder_y = (
+        48 - yoff
+    )
     hip_y = 77 - yoff
-
     torso_width = (
         25
         if gender == "male"
         else 21
     )
+
     torso = pygame.Rect(
-        c - torso_width // 2,
+        c
+        - torso_width // 2,
         shoulder_y,
         torso_width,
         31,
@@ -537,26 +650,29 @@ def _person_surface(
         2,
     )
 
-    social_open = int(
-        8 * _clamp(social)
-    )
     arm_swing = int(
         swing * 0.70
     )
     left_hand = (
-        c - 22 - social_open,
-        70 - yoff - arm_swing,
+        c - 22,
+        70
+        - yoff
+        - arm_swing,
     )
     right_hand = (
-        c + 22 + social_open,
-        70 - yoff + arm_swing,
+        c + 22,
+        70
+        - yoff
+        + arm_swing,
     )
 
     pygame.draw.line(
         surf,
         skin,
         (
-            c - torso_width // 2 + 2,
+            c
+            - torso_width // 2
+            + 2,
             shoulder_y + 7,
         ),
         left_hand,
@@ -566,7 +682,9 @@ def _person_surface(
         surf,
         skin,
         (
-            c + torso_width // 2 - 2,
+            c
+            + torso_width // 2
+            - 2,
             shoulder_y + 7,
         ),
         right_hand,
@@ -575,19 +693,27 @@ def _person_surface(
 
     leg_swing = int(swing)
     left_knee = (
-        c - 8 - leg_swing // 3,
+        c
+        - 8
+        - leg_swing // 3,
         96 - yoff,
     )
     right_knee = (
-        c + 8 + leg_swing // 3,
+        c
+        + 8
+        + leg_swing // 3,
         96 - yoff,
     )
     left_foot = (
-        c - 11 - leg_swing,
+        c
+        - 11
+        - leg_swing,
         118 - yoff,
     )
     right_foot = (
-        c + 11 + leg_swing,
+        c
+        + 11
+        + leg_swing,
         118 - yoff,
     )
 
@@ -653,39 +779,47 @@ def _person_surface(
 def _draw_person(
     screen: pygame.Surface,
     view: PersonView,
-    gender: str,
-    walk_phase: float,
-    speed: float,
     selected: bool,
     hovered: bool,
-    social: float = 0.0,
 ) -> None:
-    moving = speed > 4.0
+    moving = (
+        view.speed > 4.0
+    )
     base = _person_surface(
-        gender,
-        walk_phase,
+        view.gender,
+        view.walk_phase,
         moving,
-        social=social,
     )
 
-    facing_left = (
-        math.cos(view.heading) < 0.0
-    )
-    if facing_left:
+    if (
+        math.cos(
+            view.heading
+        )
+        < 0.0
+    ):
         base = pygame.transform.flip(
             base,
             True,
             False,
         )
 
-    shadow_w = 46 if moving else 42
     shadow = pygame.Surface(
-        (shadow_w, 14),
+        (
+            46
+            if moving
+            else 42,
+            14,
+        ),
         pygame.SRCALPHA,
     )
     pygame.draw.ellipse(
         shadow,
-        (0, 0, 0, 68),
+        (
+            0,
+            0,
+            0,
+            68,
+        ),
         shadow.get_rect(),
     )
     screen.blit(
@@ -721,7 +855,9 @@ def _draw_person(
 
     screen.blit(
         base,
-        base.get_rect(center=center),
+        base.get_rect(
+            center=center
+        ),
     )
 
 
@@ -734,35 +870,95 @@ def _bread_surface(
     )
     pygame.draw.ellipse(
         surf,
-        (0, 0, 0, min(alpha, 75)),
-        (7, 22, 25, 7),
+        (
+            0,
+            0,
+            0,
+            min(
+                alpha,
+                75,
+            ),
+        ),
+        (
+            7,
+            22,
+            25,
+            7,
+        ),
     )
     pygame.draw.rect(
         surf,
-        (132, 79, 39, alpha),
-        (5, 7, 28, 18),
+        (
+            132,
+            79,
+            39,
+            alpha,
+        ),
+        (
+            5,
+            7,
+            28,
+            18,
+        ),
         border_radius=8,
     )
     pygame.draw.rect(
         surf,
-        (229, 177, 94, alpha),
-        (7, 8, 24, 15),
+        (
+            229,
+            177,
+            94,
+            alpha,
+        ),
+        (
+            7,
+            8,
+            24,
+            15,
+        ),
         border_radius=7,
     )
     pygame.draw.rect(
         surf,
-        (244, 204, 137, alpha),
-        (9, 10, 20, 11),
+        (
+            244,
+            204,
+            137,
+            alpha,
+        ),
+        (
+            9,
+            10,
+            20,
+            11,
+        ),
         border_radius=6,
     )
-    for x in (13, 19, 25):
+
+    for x in (
+        13,
+        19,
+        25,
+    ):
         pygame.draw.line(
             surf,
-            (202, 148, 76, alpha),
-            (x - 2, 11),
-            (x, 17),
+            (
+                202,
+                148,
+                76,
+                alpha,
+            ),
+            (
+                x - 2,
+                11,
+            ),
+            (
+                x,
+                17,
+            ),
             2,
         )
+
     return surf
 
 
@@ -773,42 +969,18 @@ def _draw_bread(
     ghost: bool = False,
 ) -> None:
     surf = _bread_surface(
-        145 if ghost else 255
+        145
+        if ghost
+        else 255
     )
     screen.blit(
         surf,
         surf.get_rect(
-            center=(int(x), int(y))
+            center=(
+                int(x),
+                int(y),
+            )
         ),
-    )
-
-
-def _draw_heart(
-    screen: pygame.Surface,
-    x: int,
-    y: int,
-) -> None:
-    color = (226, 109, 137)
-    pygame.draw.circle(
-        screen,
-        color,
-        (x - 4, y - 2),
-        5,
-    )
-    pygame.draw.circle(
-        screen,
-        color,
-        (x + 4, y - 2),
-        5,
-    )
-    pygame.draw.polygon(
-        screen,
-        color,
-        [
-            (x - 9, y),
-            (x + 9, y),
-            (x, y + 11),
-        ],
     )
 
 
@@ -818,28 +990,65 @@ def _draw_grass(
     pygame.draw.rect(
         screen,
         GRASS,
-        (0, 0, ARENA_W, HEIGHT),
+        (
+            0,
+            0,
+            ARENA_W,
+            HEIGHT,
+        ),
     )
 
-    for gx in range(24, ARENA_W, 64):
+    for gx in range(
+        24,
+        ARENA_W,
+        64,
+    ):
         pygame.draw.line(
             screen,
             GRASS_DARK,
-            (gx, 12),
-            (gx, HEIGHT - 12),
-            1,
-        )
-    for gy in range(28, HEIGHT, 64):
-        pygame.draw.line(
-            screen,
-            GRASS_DARK,
-            (12, gy),
-            (ARENA_W - 12, gy),
+            (
+                gx,
+                12,
+            ),
+            (
+                gx,
+                HEIGHT - 12,
+            ),
             1,
         )
 
-    for y in range(36, HEIGHT, 96):
-        shift = 34 if (y // 96) % 2 else 0
+    for gy in range(
+        28,
+        HEIGHT,
+        64,
+    ):
+        pygame.draw.line(
+            screen,
+            GRASS_DARK,
+            (
+                12,
+                gy,
+            ),
+            (
+                ARENA_W - 12,
+                gy,
+            ),
+            1,
+        )
+
+    for y in range(
+        36,
+        HEIGHT,
+        96,
+    ):
+        shift = (
+            34
+            if (
+                y // 96
+            )
+            % 2
+            else 0
+        )
         for x in range(
             40 + shift,
             ARENA_W,
@@ -848,15 +1057,27 @@ def _draw_grass(
             pygame.draw.line(
                 screen,
                 GRASS_LIGHT,
-                (x, y + 3),
-                (x - 3, y - 2),
+                (
+                    x,
+                    y + 3,
+                ),
+                (
+                    x - 3,
+                    y - 2,
+                ),
                 1,
             )
             pygame.draw.line(
                 screen,
                 GRASS_LIGHT,
-                (x, y + 3),
-                (x + 3, y - 3),
+                (
+                    x,
+                    y + 3,
+                ),
+                (
+                    x + 3,
+                    y - 3,
+                ),
                 1,
             )
 
@@ -864,7 +1085,6 @@ def _draw_grass(
 def _draw_arena(
     screen: pygame.Surface,
     world: CyberFlyWorld,
-    outputs: BrainOutputs,
     selected_person: str,
     hovered_person: str | None,
     placing_item_id: str | None,
@@ -873,15 +1093,15 @@ def _draw_arena(
 ) -> None:
     _draw_grass(screen)
 
-    border_color = (
-        DANGER
-        if world.state.pain > 0.72
-        else (37, 78, 42)
-    )
     pygame.draw.rect(
         screen,
-        border_color,
-        (10, 10, ARENA_W - 20, HEIGHT - 20),
+        (37, 78, 42),
+        (
+            10,
+            10,
+            ARENA_W - 20,
+            HEIGHT - 20,
+        ),
         3,
         border_radius=16,
     )
@@ -893,50 +1113,47 @@ def _draw_arena(
             y,
         )
 
-    male = world.person_view("male")
-    female = world.person_view("female")
-
-    _draw_person(
-        screen,
-        female,
-        "female",
-        world.female_walk_phase,
-        world.female_speed,
-        selected_person == "female",
-        hovered_person == "female",
-    )
-    _draw_person(
-        screen,
-        male,
-        "male",
-        world.male_walk_phase,
-        world.male_speed,
-        selected_person == "male",
-        hovered_person == "male",
-        social=outputs.courtship,
-    )
-
-    if outputs.courtship > 0.28:
-        _draw_heart(
+    for person_id in (
+        world.person_ids()
+    ):
+        view = world.person_view(
+            person_id
+        )
+        _draw_person(
             screen,
-            int(male.x) + 28,
-            int(male.y) - 46,
+            view,
+            (
+                person_id
+                == selected_person
+            ),
+            (
+                person_id
+                == hovered_person
+            ),
         )
 
     if placing_item_id:
         mx, my = mouse_pos
         if (
-            10 <= mx < ARENA_W - 10
-            and 10 <= my < HEIGHT - 10
+            10 <= mx
+            < ARENA_W - 10
+            and 10 <= my
+            < HEIGHT - 10
         ):
             pygame.draw.circle(
                 screen,
                 HOVER,
-                (mx, my),
+                (
+                    mx,
+                    my,
+                ),
                 24,
                 2,
             )
-            if placing_item_id == "bread":
+            if (
+                placing_item_id
+                == "bread"
+            ):
                 _draw_bread(
                     screen,
                     mx,
@@ -944,7 +1161,9 @@ def _draw_arena(
                     ghost=True,
                 )
 
-        item = get_item(placing_item_id)
+        item = get_item(
+            placing_item_id
+        )
         label = (
             f"点击地面放置 "
             f"{item.name if item else '物品'}"
@@ -968,59 +1187,54 @@ def _draw_arena(
             1,
             border_radius=17,
         )
-        img = font_small.render(
+        image = font_small.render(
             label,
             True,
             TEXT,
         )
         screen.blit(
-            img,
+            image,
             (
                 pill.x + 14,
                 pill.centery
-                - img.get_height() // 2,
+                - image.get_height()
+                // 2,
             ),
         )
 
 
 def _dropdown_rows(
     query: str,
-) -> list[tuple[object, pygame.Rect]]:
-    items = search_items(query)[
-        :DROPDOWN_MAX
-    ]
+) -> list[
+    tuple[object, pygame.Rect]
+]:
+    items = search_items(
+        query
+    )[:DROPDOWN_MAX]
     rows: list[
-        tuple[object, pygame.Rect]
+        tuple[
+            object,
+            pygame.Rect,
+        ]
     ] = []
-    for index, item in enumerate(items):
+
+    for index, item in enumerate(
+        items
+    ):
         rows.append(
             (
                 item,
                 pygame.Rect(
                     PICKER_RECT.x,
                     DROPDOWN_TOP
-                    + index * DROPDOWN_ROW_H,
+                    + index
+                    * DROPDOWN_ROW_H,
                     PICKER_RECT.w,
                     DROPDOWN_ROW_H,
                 ),
             )
         )
     return rows
-
-
-def _learning_values(
-    selected_person: str,
-    total: int,
-    session: int,
-    recent: int,
-) -> tuple[str, str, str]:
-    if selected_person == "male":
-        return (
-            str(total),
-            str(session),
-            str(recent),
-        )
-    return ("—", "—", "—")
 
 
 def _draw_three_stats(
@@ -1035,34 +1249,49 @@ def _draw_three_stats(
     font: pygame.font.Font,
 ) -> None:
     col_w = rect.w // 3
-    for i, (label, value) in enumerate(stats):
-        cx = rect.x + i * col_w
-        val = font.render(
+
+    for i, (
+        label,
+        value,
+    ) in enumerate(stats):
+        cx = (
+            rect.x
+            + i * col_w
+        )
+        value_img = font.render(
             value,
             True,
             TEXT,
         )
-        lab = font_small.render(
-            label,
-            True,
-            MUTED,
+        label_img = (
+            font_small.render(
+                label,
+                True,
+                MUTED,
+            )
         )
         screen.blit(
-            val,
+            value_img,
             (
                 cx
-                + (col_w - val.get_width())
+                + (
+                    col_w
+                    - value_img.get_width()
+                )
                 // 2,
-                rect.y + 12,
+                rect.y + 10,
             ),
         )
         screen.blit(
-            lab,
+            label_img,
             (
                 cx
-                + (col_w - lab.get_width())
+                + (
+                    col_w
+                    - label_img.get_width()
+                )
                 // 2,
-                rect.y + 42,
+                rect.y + 38,
             ),
         )
         if i:
@@ -1071,21 +1300,72 @@ def _draw_three_stats(
                 LINE,
                 (
                     cx,
-                    rect.y + 12,
+                    rect.y + 10,
                 ),
                 (
                     cx,
-                    rect.bottom - 12,
+                    rect.bottom - 10,
                 ),
                 1,
             )
+
+
+def _draw_add_button(
+    screen: pygame.Surface,
+    rect: pygame.Rect,
+    text: str,
+    mouse_pos: tuple[int, int],
+    font_small: pygame.font.Font,
+) -> None:
+    hovered = (
+        rect.collidepoint(
+            mouse_pos
+        )
+    )
+    pygame.draw.rect(
+        screen,
+        (
+            CARD_HOVER
+            if hovered
+            else CARD
+        ),
+        rect,
+        border_radius=10,
+    )
+    pygame.draw.rect(
+        screen,
+        (
+            ACCENT
+            if hovered
+            else LINE
+        ),
+        rect,
+        1,
+        border_radius=10,
+    )
+    image = font_small.render(
+        text,
+        True,
+        TEXT,
+    )
+    screen.blit(
+        image,
+        (
+            rect.centerx
+            - image.get_width()
+            // 2,
+            rect.centery
+            - image.get_height()
+            // 2,
+        ),
+    )
 
 
 def _draw_panel(
     screen: pygame.Surface,
     world: CyberFlyWorld,
     selected_person: str,
-    male_sleeping: bool,
+    sleeping_ids: set[str],
     simulation_speed: float,
     speed_dragging: bool,
     total_learning: int,
@@ -1105,50 +1385,55 @@ def _draw_panel(
     pygame.draw.rect(
         screen,
         PANEL_BG,
-        (ARENA_W, 0, PANEL_W, HEIGHT),
+        (
+            ARENA_W,
+            0,
+            PANEL_W,
+            HEIGHT,
+        ),
     )
     pygame.draw.line(
         screen,
         LINE,
-        (ARENA_W, 0),
-        (ARENA_W, HEIGHT),
+        (
+            ARENA_W,
+            0,
+        ),
+        (
+            ARENA_W,
+            HEIGHT,
+        ),
         1,
     )
 
     view = world.person_view(
         selected_person
     )
-    x = ARENA_W + PANEL_PAD
-
-    title = (
-        "男性"
-        if selected_person == "male"
-        else "女性"
+    males, females = (
+        world.population_counts()
     )
+    x = (
+        ARENA_W
+        + PANEL_PAD
+    )
+
     _text(
         screen,
         font_big,
-        title,
+        view.name,
         x,
-        22,
+        20,
     )
 
-    if selected_person == "male":
-        status = (
-            "睡眠"
-            if male_sleeping
-            else "清醒"
-        )
-    else:
-        status = (
-            "疲惫"
-            if view.fatigue > 0.86
-            else "清醒"
-        )
-
+    status = (
+        "睡眠"
+        if selected_person
+        in sleeping_ids
+        else "清醒"
+    )
     chip = pygame.Rect(
         WIDTH - 78,
-        23,
+        22,
         58,
         28,
     )
@@ -1160,32 +1445,55 @@ def _draw_panel(
     )
     pygame.draw.circle(
         screen,
-        BLUE if status == "睡眠" else ACCENT,
+        (
+            BLUE
+            if status == "睡眠"
+            else ACCENT
+        ),
         (
             chip.x + 12,
             chip.centery,
         ),
         4,
     )
-    status_img = font_small.render(
-        status,
-        True,
-        TEXT,
+    status_img = (
+        font_small.render(
+            status,
+            True,
+            TEXT,
+        )
     )
     screen.blit(
         status_img,
         (
             chip.x + 22,
             chip.centery
-            - status_img.get_height() // 2,
+            - status_img.get_height()
+            // 2,
         ),
+    )
+
+    _draw_add_button(
+        screen,
+        ADD_MALE_RECT,
+        f"+ 男  {males}",
+        mouse_pos,
+        font_small,
+    )
+    _draw_add_button(
+        screen,
+        ADD_FEMALE_RECT,
+        f"+ 女  {females}",
+        mouse_pos,
+        font_small,
     )
 
     state_card = pygame.Rect(
         x,
-        68,
-        PANEL_W - PANEL_PAD * 2,
-        214,
+        112,
+        PANEL_W
+        - PANEL_PAD * 2,
+        188,
     )
     pygame.draw.rect(
         screen,
@@ -1198,17 +1506,18 @@ def _draw_panel(
         font_small,
         "状态",
         state_card.x + 14,
-        state_card.y + 10,
+        state_card.y + 9,
         MUTED,
     )
 
     bx = state_card.x + 14
     bw = state_card.w - 28
+
     _meter(
         screen,
         font_small,
         bx,
-        101,
+        137,
         "饥饿",
         view.hunger,
         WARM,
@@ -1218,7 +1527,7 @@ def _draw_panel(
         screen,
         font_small,
         bx,
-        137,
+        170,
         "疲劳",
         view.fatigue,
         BLUE,
@@ -1228,7 +1537,7 @@ def _draw_panel(
         screen,
         font_small,
         bx,
-        173,
+        203,
         "社交",
         view.social_drive,
         PURPLE,
@@ -1238,7 +1547,7 @@ def _draw_panel(
         screen,
         font_small,
         bx,
-        209,
+        236,
         "奖励",
         view.dopamine,
         ACCENT,
@@ -1248,7 +1557,7 @@ def _draw_panel(
         screen,
         font_small,
         bx,
-        245,
+        269,
         "疼痛",
         view.pain,
         DANGER,
@@ -1257,9 +1566,10 @@ def _draw_panel(
 
     stats_card = pygame.Rect(
         x,
-        296,
-        PANEL_W - PANEL_PAD * 2,
-        68,
+        314,
+        PANEL_W
+        - PANEL_PAD * 2,
+        60,
     )
     pygame.draw.rect(
         screen,
@@ -1277,11 +1587,13 @@ def _draw_panel(
             ),
             (
                 "面包",
-                str(view.food_eaten),
+                str(
+                    view.food_eaten
+                ),
             ),
             (
-                "位置",
-                f"{int(view.x)},{int(view.y)}",
+                "速度",
+                f"{view.speed:.0f}",
             ),
         ),
         font_small,
@@ -1290,9 +1602,10 @@ def _draw_panel(
 
     learning_card = pygame.Rect(
         x,
-        378,
-        PANEL_W - PANEL_PAD * 2,
-        96,
+        388,
+        PANEL_W
+        - PANEL_PAD * 2,
+        84,
     )
     pygame.draw.rect(
         screen,
@@ -1303,30 +1616,32 @@ def _draw_panel(
     _text(
         screen,
         font_small,
-        "学习",
+        f"共享学习  ×{len(world.person_ids())}",
         learning_card.x + 14,
-        learning_card.y + 9,
+        learning_card.y + 8,
         MUTED,
-    )
-    lv = _learning_values(
-        selected_person,
-        total_learning,
-        session_learning,
-        recent_learning,
-    )
-    learn_stats_rect = pygame.Rect(
-        learning_card.x,
-        learning_card.y + 24,
-        learning_card.w,
-        learning_card.h - 24,
     )
     _draw_three_stats(
         screen,
-        learn_stats_rect,
+        pygame.Rect(
+            learning_card.x,
+            learning_card.y + 20,
+            learning_card.w,
+            learning_card.h - 20,
+        ),
         (
-            ("总量", lv[0]),
-            ("本局", lv[1]),
-            ("10秒", lv[2]),
+            (
+                "总量",
+                str(total_learning),
+            ),
+            (
+                "本局",
+                str(session_learning),
+            ),
+            (
+                "10秒",
+                str(recent_learning),
+            ),
         ),
         font_small,
         font,
@@ -1354,20 +1669,26 @@ def _draw_panel(
             mouse_pos
         )
     )
-    picker_fill = (
-        CARD_HOVER
-        if picker_hover or search_active
-        else CARD
-    )
     pygame.draw.rect(
         screen,
-        picker_fill,
+        (
+            CARD_HOVER
+            if (
+                picker_hover
+                or search_active
+            )
+            else CARD
+        ),
         PICKER_RECT,
         border_radius=10,
     )
     pygame.draw.rect(
         screen,
-        ACCENT if search_active else LINE,
+        (
+            ACCENT
+            if search_active
+            else LINE
+        ),
         PICKER_RECT,
         1,
         border_radius=10,
@@ -1394,17 +1715,18 @@ def _draw_panel(
         )
         picker_color = TEXT
 
-    img = font.render(
+    picker_img = font.render(
         picker_text,
         True,
         picker_color,
     )
     screen.blit(
-        img,
+        picker_img,
         (
             PICKER_RECT.x + 14,
             PICKER_RECT.centery
-            - img.get_height() // 2,
+            - picker_img.get_height()
+            // 2,
         ),
     )
 
@@ -1429,14 +1751,17 @@ def _draw_panel(
 
     if (
         search_active
-        and int(time.monotonic() * 2) % 2
+        and int(
+            time.monotonic() * 2
+        )
+        % 2
         == 0
     ):
         caret_x = min(
             PICKER_RECT.right - 34,
             PICKER_RECT.x
             + 14
-            + img.get_width()
+            + picker_img.get_width()
             + 2,
         )
         pygame.draw.line(
@@ -1459,8 +1784,14 @@ def _draw_panel(
         )
     )
     if placing_item_id:
-        button_fill = (105, 70, 67)
-        button_text = "取消放置"
+        button_fill = (
+            105,
+            70,
+            67,
+        )
+        button_text = (
+            "取消放置"
+        )
     else:
         button_fill = (
             (53, 139, 92)
@@ -1484,17 +1815,20 @@ def _draw_panel(
         button_img,
         (
             PLACE_RECT.centerx
-            - button_img.get_width() // 2,
+            - button_img.get_width()
+            // 2,
             PLACE_RECT.centery
-            - button_img.get_height() // 2,
+            - button_img.get_height()
+            // 2,
         ),
     )
 
     event_card = pygame.Rect(
         x,
         680,
-        PANEL_W - PANEL_PAD * 2,
-        44,
+        PANEL_W
+        - PANEL_PAD * 2,
+        42,
     )
     pygame.draw.rect(
         screen,
@@ -1511,34 +1845,45 @@ def _draw_panel(
         ),
         4,
     )
-    event_img = font_small.render(
-        last_event_text,
-        True,
-        TEXT,
+    event_img = (
+        font_small.render(
+            last_event_text,
+            True,
+            TEXT,
+        )
     )
     screen.blit(
         event_img,
         (
             event_card.x + 28,
             event_card.centery
-            - event_img.get_height() // 2,
+            - event_img.get_height()
+            // 2,
         ),
     )
 
-    footer = "点击人物切换  ·  Q 退出"
-    if placing_item_id or dropdown_open:
-        footer = "Esc 取消  ·  Q 退出"
-
-    footer_img = font_small.render(
-        footer,
-        True,
-        MUTED,
+    footer = (
+        "点击人物切换  ·  Q 退出"
+    )
+    if (
+        placing_item_id
+        or dropdown_open
+    ):
+        footer = (
+            "Esc 取消  ·  Q 退出"
+        )
+    footer_img = (
+        font_small.render(
+            footer,
+            True,
+            MUTED,
+        )
     )
     screen.blit(
         footer_img,
         (
             x,
-            HEIGHT - 32,
+            HEIGHT - 27,
         ),
     )
 
@@ -1575,9 +1920,13 @@ def _draw_panel(
                     pygame.draw.rect(
                         screen,
                         CARD_HOVER,
-                        rect.inflate(-2, -2),
+                        rect.inflate(
+                            -2,
+                            -2,
+                        ),
                         border_radius=8,
                     )
+
                 _text(
                     screen,
                     font,
@@ -1603,39 +1952,36 @@ def _draw_panel(
                         // 2,
                     ),
                 )
-        else:
-            empty = pygame.Rect(
-                PICKER_RECT.x,
-                DROPDOWN_TOP,
-                PICKER_RECT.w,
-                DROPDOWN_ROW_H,
+
+
+def _aggregate_population(
+    world: CyberFlyWorld,
+    sensors_by_id: dict[
+        str,
+        Sensors,
+    ],
+) -> tuple[
+    Sensors,
+    float,
+    float,
+    float,
+]:
+    sensors = (
+        CyberFlyWorld.aggregate_sensors(
+            list(
+                sensors_by_id.values()
             )
-            pygame.draw.rect(
-                screen,
-                (18, 27, 23),
-                empty,
-                border_radius=10,
-            )
-            pygame.draw.rect(
-                screen,
-                LINE,
-                empty,
-                1,
-                border_radius=10,
-            )
-            msg = font_small.render(
-                "没有匹配物品",
-                True,
-                MUTED,
-            )
-            screen.blit(
-                msg,
-                (
-                    empty.x + 14,
-                    empty.centery
-                    - msg.get_height() // 2,
-                ),
-            )
+        )
+    )
+    hunger, fatigue, social = (
+        world.population_averages()
+    )
+    return (
+        sensors,
+        hunger,
+        fatigue,
+        social,
+    )
 
 
 def run() -> int:
@@ -1646,7 +1992,10 @@ def run() -> int:
         "赛博宠物"
     )
     screen = pygame.display.set_mode(
-        (WIDTH, HEIGHT)
+        (
+            WIDTH,
+            HEIGHT,
+        )
     )
     clock = pygame.time.Clock()
 
@@ -1659,7 +2008,6 @@ def run() -> int:
 
     store = MemoryStore()
     snapshot = store.load_snapshot()
-
     world = CyberFlyWorld(
         width=ARENA_W,
         height=HEIGHT,
@@ -1667,28 +2015,48 @@ def run() -> int:
     )
     brain = MaleCNSBrain()
     learner = FastValenceLearner(
-        q_table=world.state.policy_q
+        q_table=(
+            world.state.policy_q
+        )
     )
-
     prior_learning_updates = (
         world.state.learning_updates
     )
-    outputs = BrainOutputs(
-        forward=0.1
-    )
-    bias = LearningBias()
 
-    selected_person = "male"
+    selected_person = (
+        world._resolve_person_id(
+            "male"
+        )
+    )
     selected_item_id = "bread"
     placing_item_id: str | None = None
     dropdown_open = False
     search_active = False
     search_text = ""
+
     simulation_speed = 1.0
     speed_dragging = False
 
+    outputs = BrainOutputs(
+        forward=0.1
+    )
+    biases: dict[
+        str,
+        LearningBias,
+    ] = {}
+
+    sleeping_ids: set[str] = set()
+    hunger_pain_active: set[str] = set()
+    collision_cooldowns: dict[
+        str,
+        float,
+    ] = {}
+
     learning_history: deque[
-        tuple[float, int]
+        tuple[
+            float,
+            int,
+        ]
     ] = deque()
     last_seen_learner_updates = 0
 
@@ -1702,13 +2070,11 @@ def run() -> int:
         if snapshot
         else "新生命"
     )
-    courtship_cooldown = 0.0
+    social_cooldown = 0.0
     escape_cooldown = 0.0
-    collision_log_cooldown = 0.0
-    sleeping = False
-    hunger_pain_active = False
 
     def sync_learning_state() -> None:
+        world.sync_snapshot()
         world.state.policy_q = (
             learner.export()
         )
@@ -1719,18 +2085,24 @@ def run() -> int:
 
     def update_learning_history() -> None:
         nonlocal last_seen_learner_updates
+
         delta = (
             learner.updates
             - last_seen_learner_updates
         )
         now = time.monotonic()
+
         if delta > 0:
             learning_history.append(
-                (now, delta)
+                (
+                    now,
+                    delta,
+                )
             )
             last_seen_learner_updates = (
                 learner.updates
             )
+
         while (
             learning_history
             and now
@@ -1764,11 +2136,13 @@ def run() -> int:
     def choose_first_search_result() -> bool:
         nonlocal selected_item_id
         nonlocal search_text
+
         results = search_items(
             search_text
         )
         if not results:
             return False
+
         selected_item_id = (
             results[0].item_id
         )
@@ -1780,11 +2154,13 @@ def run() -> int:
         reason: str = "shutdown",
     ) -> None:
         nonlocal shutdown_saved
+
         try:
             sync_learning_state()
             store.save_snapshot(
                 world.state
             )
+
             if (
                 reason == "shutdown"
                 and not shutdown_saved
@@ -1793,9 +2169,8 @@ def run() -> int:
                     "session_end",
                     0.15,
                     {
-                        "age_seconds": round(
-                            world.state.age_seconds,
-                            2,
+                        "people": len(
+                            world.person_ids()
                         ),
                         "learning_updates": (
                             world.state.learning_updates
@@ -1835,16 +2210,21 @@ def run() -> int:
     try:
         while running:
             real_dt = min(
-                clock.tick(FPS) / 1000.0,
+                clock.tick(FPS)
+                / 1000.0,
                 0.08,
             )
             dt = min(
-                real_dt * simulation_speed,
+                real_dt
+                * simulation_speed,
                 0.20,
             )
 
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+                if (
+                    event.type
+                    == pygame.QUIT
+                ):
                     running = False
                     continue
 
@@ -1853,47 +2233,10 @@ def run() -> int:
                     == pygame.TEXTINPUT
                     and search_active
                 ):
-                    search_text += event.text
+                    search_text += (
+                        event.text
+                    )
                     dropdown_open = True
-                    continue
-
-                if event.type == pygame.KEYDOWN:
-                    if search_active:
-                        if (
-                            event.key
-                            == pygame.K_BACKSPACE
-                        ):
-                            search_text = (
-                                search_text[:-1]
-                            )
-                        elif (
-                            event.key
-                            == pygame.K_RETURN
-                        ):
-                            choose_first_search_result()
-                        elif (
-                            event.key
-                            == pygame.K_ESCAPE
-                        ):
-                            search_text = ""
-                            close_search()
-                        continue
-
-                    if event.key == pygame.K_q:
-                        running = False
-                    elif (
-                        event.key
-                        == pygame.K_ESCAPE
-                    ):
-                        if placing_item_id:
-                            placing_item_id = None
-                            last_event_text = (
-                                "已取消放置"
-                            )
-                        elif dropdown_open:
-                            close_search()
-                        else:
-                            running = False
                     continue
 
                 if (
@@ -1918,242 +2261,407 @@ def run() -> int:
 
                 if (
                     event.type
-                    == pygame.MOUSEBUTTONDOWN
+                    == pygame.KEYDOWN
                 ):
-                    mx, my = event.pos
-
-                    if (
-                        event.button == 3
-                        and placing_item_id
-                    ):
-                        placing_item_id = None
-                        last_event_text = (
-                            "已取消放置"
-                        )
-                        continue
-
-                    if event.button != 1:
-                        continue
-
-                    if SPEED_RECT.collidepoint(
-                        event.pos
-                    ):
-                        speed_dragging = True
-                        simulation_speed = (
-                            _speed_from_mouse_x(
-                                mx
-                            )
-                        )
-                        last_event_text = (
-                            f"模拟速度 "
-                            f"{simulation_speed:g}×"
-                        )
-                        continue
-
-                    if PICKER_RECT.collidepoint(
-                        event.pos
-                    ):
-                        placing_item_id = None
-                        search_text = ""
-                        search_active = True
-                        dropdown_open = True
-                        pygame.key.start_text_input()
-                        continue
-
-                    if dropdown_open:
-                        picked = None
-                        for item, rect in (
-                            _dropdown_rows(
-                                search_text
-                            )
+                    if search_active:
+                        if (
+                            event.key
+                            == pygame.K_BACKSPACE
                         ):
-                            if rect.collidepoint(
-                                event.pos
-                            ):
-                                picked = item
-                                break
-                        if picked:
-                            selected_item_id = (
-                                picked.item_id
+                            search_text = (
+                                search_text[:-1]
                             )
+                        elif (
+                            event.key
+                            == pygame.K_RETURN
+                        ):
+                            choose_first_search_result()
+                        elif (
+                            event.key
+                            == pygame.K_ESCAPE
+                        ):
                             search_text = ""
                             close_search()
-                        else:
-                            close_search()
                         continue
 
-                    if PLACE_RECT.collidepoint(
-                        event.pos
+                    if (
+                        event.key
+                        == pygame.K_q
+                    ):
+                        running = False
+                    elif (
+                        event.key
+                        == pygame.K_ESCAPE
                     ):
                         if placing_item_id:
                             placing_item_id = None
                             last_event_text = (
                                 "已取消放置"
                             )
+                        elif dropdown_open:
+                            close_search()
                         else:
-                            placing_item_id = (
-                                selected_item_id
-                            )
-                            item = get_item(
-                                selected_item_id
-                            )
-                            last_event_text = (
-                                f"选择"
-                                f"{item.name if item else '物品'}"
-                                f"位置"
-                            )
-                        continue
+                            running = False
+                    continue
 
+                if (
+                    event.type
+                    != pygame.MOUSEBUTTONDOWN
+                ):
+                    continue
+
+                mx, my = event.pos
+
+                if (
+                    event.button == 3
+                    and placing_item_id
+                ):
+                    placing_item_id = None
+                    last_event_text = (
+                        "已取消放置"
+                    )
+                    continue
+
+                if event.button != 1:
+                    continue
+
+                if (
+                    ADD_MALE_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    if (
+                        len(
+                            world.person_ids()
+                        )
+                        >= MAX_PEOPLE
+                    ):
+                        last_event_text = (
+                            f"最多 {MAX_PEOPLE} 人"
+                        )
+                    else:
+                        selected_person = (
+                            world.add_person(
+                                "male"
+                            )
+                        )
+                        store.append_episode(
+                            "add_person",
+                            0.1,
+                            {
+                                "gender": "male",
+                                "person_id": (
+                                    selected_person
+                                ),
+                            },
+                        )
+                        last_event_text = (
+                            "已增加男性"
+                        )
+                    continue
+
+                if (
+                    ADD_FEMALE_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    if (
+                        len(
+                            world.person_ids()
+                        )
+                        >= MAX_PEOPLE
+                    ):
+                        last_event_text = (
+                            f"最多 {MAX_PEOPLE} 人"
+                        )
+                    else:
+                        selected_person = (
+                            world.add_person(
+                                "female"
+                            )
+                        )
+                        store.append_episode(
+                            "add_person",
+                            0.1,
+                            {
+                                "gender": "female",
+                                "person_id": (
+                                    selected_person
+                                ),
+                            },
+                        )
+                        last_event_text = (
+                            "已增加女性"
+                        )
+                    continue
+
+                if (
+                    SPEED_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    speed_dragging = True
+                    simulation_speed = (
+                        _speed_from_mouse_x(
+                            mx
+                        )
+                    )
+                    last_event_text = (
+                        f"模拟速度 "
+                        f"{simulation_speed:g}×"
+                    )
+                    continue
+
+                if (
+                    PICKER_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    placing_item_id = None
+                    search_text = ""
+                    search_active = True
+                    dropdown_open = True
+                    pygame.key.start_text_input()
+                    continue
+
+                if dropdown_open:
+                    picked = None
+                    for item, rect in (
+                        _dropdown_rows(
+                            search_text
+                        )
+                    ):
+                        if (
+                            rect.collidepoint(
+                                event.pos
+                            )
+                        ):
+                            picked = item
+                            break
+
+                    if picked:
+                        selected_item_id = (
+                            picked.item_id
+                        )
+                        search_text = ""
+                        close_search()
+                    else:
+                        close_search()
+                    continue
+
+                if (
+                    PLACE_RECT.collidepoint(
+                        event.pos
+                    )
+                ):
+                    if placing_item_id:
+                        placing_item_id = None
+                        last_event_text = (
+                            "已取消放置"
+                        )
+                    else:
+                        placing_item_id = (
+                            selected_item_id
+                        )
+                        item = get_item(
+                            selected_item_id
+                        )
+                        last_event_text = (
+                            f"选择"
+                            f"{item.name if item else '物品'}"
+                            f"位置"
+                        )
+                    continue
+
+                if (
+                    placing_item_id
+                    and mx < ARENA_W
+                ):
+                    item = get_item(
+                        placing_item_id
+                    )
                     if (
                         placing_item_id
-                        and mx < ARENA_W
+                        == "bread"
                     ):
-                        item = get_item(
-                            placing_item_id
+                        px, py = (
+                            world.place_food(
+                                mx,
+                                my,
+                            )
                         )
-                        if (
-                            placing_item_id
-                            == "bread"
-                        ):
-                            px, py = (
-                                world.place_food(
-                                    mx,
-                                    my,
-                                )
-                            )
-                            store.append_episode(
-                                "place_item",
-                                0.1,
-                                {
-                                    "item": "bread",
-                                    "x": round(
-                                        px,
-                                        2,
-                                    ),
-                                    "y": round(
-                                        py,
-                                        2,
-                                    ),
-                                },
-                            )
-                            last_event_text = (
-                                "已放置面包"
-                            )
-                        elif item:
-                            last_event_text = (
-                                f"暂不支持放置"
-                                f"{item.name}"
-                            )
-                        placing_item_id = None
+                        store.append_episode(
+                            "place_item",
+                            0.1,
+                            {
+                                "item": "bread",
+                                "x": round(
+                                    px,
+                                    2,
+                                ),
+                                "y": round(
+                                    py,
+                                    2,
+                                ),
+                            },
+                        )
+                        last_event_text = (
+                            "已放置面包"
+                        )
+                    elif item:
+                        last_event_text = (
+                            f"暂不支持放置"
+                            f"{item.name}"
+                        )
+
+                    placing_item_id = None
+                    continue
+
+                if mx < ARENA_W:
+                    person_id = _person_at(
+                        world,
+                        event.pos,
+                    )
+                    if person_id:
+                        selected_person = (
+                            person_id
+                        )
+                        last_event_text = (
+                            f"已选择 "
+                            f"{world.person_view(person_id).name}"
+                        )
                         continue
 
-                    if mx < ARENA_W:
-                        person = _person_at(
-                            world,
-                            event.pos,
-                        )
-                        if person:
-                            selected_person = person
-                            last_event_text = (
-                                "已选择男性"
-                                if person == "male"
-                                else "已选择女性"
-                            )
-                            continue
+                close_search()
 
-                    close_search()
-
-            courtship_cooldown = max(
+            social_cooldown = max(
                 0.0,
-                courtship_cooldown - dt,
+                social_cooldown - dt,
             )
             escape_cooldown = max(
                 0.0,
                 escape_cooldown - dt,
             )
-            collision_log_cooldown = max(
-                0.0,
-                collision_log_cooldown - dt,
+            for pid in list(
+                collision_cooldowns
+            ):
+                collision_cooldowns[
+                    pid
+                ] = max(
+                    0.0,
+                    collision_cooldowns[
+                        pid
+                    ]
+                    - dt,
+                )
+
+            body_events = (
+                world.update_people(dt)
             )
 
-            world.update_mate(dt)
-            body_event = world.update_body(
-                dt
-            )
-
-            if body_event == "male_ate":
+            for body_event in body_events:
+                pid = body_event[
+                    "person_id"
+                ]
+                view = world.person_view(
+                    pid
+                )
                 store.append_episode(
                     "ate_bread",
                     1.0,
                     {
-                        "person": "male",
+                        "person_id": pid,
+                        "gender": (
+                            body_event[
+                                "gender"
+                            ]
+                        ),
                         "hunger_after": round(
-                            world.state.hunger,
+                            body_event[
+                                "hunger_after"
+                            ],
                             3,
                         ),
                         "satiety_gain": 0.15,
                     },
                 )
                 last_event_text = (
-                    "男性吃到面包"
-                )
-            elif body_event == "female_ate":
-                store.append_episode(
-                    "ate_bread",
-                    0.8,
-                    {
-                        "person": "female",
-                        "hunger_after": round(
-                            world.state.female_hunger,
-                            3,
-                        ),
-                        "satiety_gain": 0.15,
-                    },
-                )
-                last_event_text = (
-                    "女性吃到面包"
+                    f"{view.name} 吃到面包"
                 )
 
-            hunger_pain_level = _clamp(
+            sensors_by_id = {
+                pid: world.sense(pid)
+                for pid
+                in world.person_ids()
+            }
+
+            for pid in (
+                world.person_ids()
+            ):
+                view = world.person_view(
+                    pid
+                )
                 (
-                    world.state.hunger
-                    - 0.50
+                    dopamine_signal,
+                    pain_signal,
+                    _,
+                ) = (
+                    world.consume_learning_signal(
+                        pid
+                    )
                 )
-                / 0.50
-            )
-            if (
-                hunger_pain_level > 0.25
-                and not hunger_pain_active
-            ):
-                hunger_pain_active = True
-                world.state.pain_events += 1
-                store.append_episode(
-                    "hunger_pain",
-                    hunger_pain_level,
-                    {
-                        "hunger": round(
-                            world.state.hunger,
-                            3,
-                        ),
-                    },
+                learner.learn(
+                    dopamine_signal,
+                    pain_signal,
+                    sensors_by_id[
+                        pid
+                    ],
+                    view.hunger,
+                    agent_id=pid,
                 )
-                last_event_text = (
-                    "男性饥饿"
-                )
-            elif (
-                hunger_pain_level < 0.10
-            ):
-                hunger_pain_active = False
 
-            sensors = world.sense()
-            dopamine_signal, pain_signal, _ = (
-                world.consume_learning_signal()
-            )
-            learner.learn(
-                dopamine_signal,
-                pain_signal,
-                sensors,
-                world.state.hunger,
+                if (
+                    view.hunger > 0.625
+                    and pid
+                    not in hunger_pain_active
+                ):
+                    hunger_pain_active.add(
+                        pid
+                    )
+                    store.append_episode(
+                        "hunger_pain",
+                        view.pain,
+                        {
+                            "person_id": pid,
+                            "gender": (
+                                view.gender
+                            ),
+                        },
+                    )
+                    if (
+                        pid
+                        == selected_person
+                    ):
+                        last_event_text = (
+                            f"{view.name} 饥饿"
+                        )
+                elif (
+                    view.hunger < 0.55
+                    and pid
+                    in hunger_pain_active
+                ):
+                    hunger_pain_active.discard(
+                        pid
+                    )
+
+            (
+                population_sensors,
+                avg_hunger,
+                avg_fatigue,
+                avg_social,
+            ) = _aggregate_population(
+                world,
+                sensors_by_id,
             )
 
             brain_acc += dt
@@ -2171,162 +2679,201 @@ def run() -> int:
                     3,
                     int(
                         math.ceil(
-                            dt / neural_dt
+                            dt
+                            / neural_dt
                         )
                     )
                     + 2,
                 ),
             )
+
             while (
-                brain_acc >= neural_dt
-                and steps < max_neural_steps
+                brain_acc
+                >= neural_dt
+                and steps
+                < max_neural_steps
             ):
                 outputs = brain.step(
-                    sensors,
-                    hunger=world.state.hunger,
-                    fatigue=world.state.fatigue,
+                    population_sensors,
+                    hunger=avg_hunger,
+                    fatigue=avg_fatigue,
                     social_drive=(
-                        world.state.social_drive
+                        avg_social
                     ),
                 )
                 brain_acc -= neural_dt
                 steps += 1
 
             if (
-                steps >= max_neural_steps
+                steps
+                >= max_neural_steps
                 and brain_acc
                 > neural_dt * 4.0
             ):
-                brain_acc = neural_dt * 4.0
+                brain_acc = (
+                    neural_dt * 4.0
+                )
 
-            if (
-                world.state.fatigue > 0.88
-                and world.state.hunger < 0.78
-                and outputs.escape < 0.3
+            for pid in (
+                world.person_ids()
             ):
-                if not sleeping:
-                    store.append_episode(
-                        "sleep",
-                        0.35,
-                        {
-                            "fatigue": round(
-                                world.state.fatigue,
-                                3,
+                view = world.person_view(
+                    pid
+                )
+
+                if (
+                    view.fatigue > 0.88
+                    and view.hunger < 0.78
+                    and outputs.escape < 0.3
+                ):
+                    if (
+                        pid
+                        not in sleeping_ids
+                    ):
+                        sleeping_ids.add(
+                            pid
+                        )
+                        store.append_episode(
+                            "sleep",
+                            0.35,
+                            {
+                                "person_id": pid,
+                            },
+                        )
+                        if (
+                            pid
+                            == selected_person
+                        ):
+                            last_event_text = (
+                                f"{view.name} 睡眠"
                             )
+                elif (
+                    pid in sleeping_ids
+                    and view.fatigue < 0.42
+                ):
+                    sleeping_ids.discard(
+                        pid
+                    )
+                    store.append_episode(
+                        "wake",
+                        0.25,
+                        {
+                            "person_id": pid,
                         },
                     )
-                    last_event_text = (
-                        "男性睡眠"
-                    )
-                sleeping = True
-            elif (
-                sleeping
-                and world.state.fatigue < 0.42
-            ):
-                sleeping = False
-                store.append_episode(
-                    "wake",
-                    0.25,
-                    {},
-                )
-                last_event_text = (
-                    "男性醒来"
-                )
+                    if (
+                        pid
+                        == selected_person
+                    ):
+                        last_event_text = (
+                            f"{view.name} 醒来"
+                        )
 
-            if sleeping:
-                learner.pause()
-                bias = LearningBias()
-                world.rest(dt)
-            else:
+                if pid in sleeping_ids:
+                    learner.pause(
+                        agent_id=pid
+                    )
+                    biases[pid] = (
+                        LearningBias()
+                    )
+                    world.rest(
+                        dt,
+                        person_id=pid,
+                    )
+                    continue
+
+                sensors = sensors_by_id[
+                    pid
+                ]
                 bias = learner.choose_bias(
                     sensors,
-                    world.state.hunger,
+                    view.hunger,
                     dt,
+                    agent_id=pid,
                 )
+                biases[pid] = bias
+
                 memory_turn = (
                     sensors.memory_food_right
                     - sensors.memory_food_left
                 ) * 0.55
-                applied_forward = _clamp(
-                    outputs.forward
-                    + bias.forward
-                )
-                applied_turn = max(
-                    -1.0,
-                    min(
-                        1.0,
-                        outputs.turn
-                        + memory_turn
-                        + bias.turn,
-                    ),
-                )
-                applied_backward = _clamp(
-                    outputs.backward
-                    + bias.backward
-                )
-                applied_escape = _clamp(
-                    outputs.escape
-                    + bias.escape
-                )
 
                 bounced = world.apply_motor(
                     dt,
-                    applied_forward,
-                    applied_turn,
-                    applied_backward,
-                    applied_escape,
+                    _clamp(
+                        outputs.forward
+                        + bias.forward
+                    ),
+                    max(
+                        -1.0,
+                        min(
+                            1.0,
+                            outputs.turn
+                            + memory_turn
+                            + bias.turn,
+                        ),
+                    ),
+                    _clamp(
+                        outputs.backward
+                        + bias.backward
+                    ),
+                    _clamp(
+                        outputs.escape
+                        + bias.escape
+                    ),
+                    person_id=pid,
                 )
+
                 if (
                     bounced
-                    and collision_log_cooldown
+                    and collision_cooldowns.get(
+                        pid,
+                        0.0,
+                    )
                     <= 0.0
                 ):
-                    collision_log_cooldown = 0.8
+                    collision_cooldowns[
+                        pid
+                    ] = 0.8
                     store.append_episode(
                         "boundary_pain",
                         1.0,
                         {
-                            "person": "male",
-                            "pain": 1.0,
+                            "person_id": pid,
                         },
                     )
-                    last_event_text = (
-                        "男性撞到边界"
-                    )
+                    if (
+                        pid
+                        == selected_person
+                    ):
+                        last_event_text = (
+                            f"{view.name} 撞到边界"
+                        )
 
-            mate_dist = math.hypot(
-                world.state.female_x
-                - world.state.x,
-                world.state.female_y
-                - world.state.y,
+            closest = (
+                world.closest_pair()
             )
             if (
-                not sleeping
-                and outputs.courtship > 0.22
-                and mate_dist < 58
-                and courtship_cooldown
-                <= 0
+                closest
+                and outputs.courtship
+                > 0.22
+                and closest[2] < 58
+                and social_cooldown
+                <= 0.0
             ):
-                courtship_cooldown = 8.0
-                world.state.courtship_events += 1
-                world.state.social_drive = _clamp(
-                    world.state.social_drive
-                    - 0.22
+                social_cooldown = 8.0
+                pid_a, pid_b, distance = (
+                    closest
                 )
-                world.state.female_social_drive = (
-                    _clamp(
-                        world.state.female_social_drive
-                        - 0.16
-                    )
-                )
-                world.state.female_dopamine = max(
-                    world.state.female_dopamine,
-                    0.65,
-                )
-                world.state.female_reward_events += 1
-
                 world.pulse_dopamine(
-                    0.65,
+                    pid_a,
+                    0.55,
+                    "social_contact",
+                    count_event=True,
+                )
+                world.pulse_dopamine(
+                    pid_b,
+                    0.55,
                     "social_contact",
                     count_event=True,
                 )
@@ -2334,8 +2881,10 @@ def run() -> int:
                     "social_contact",
                     0.7,
                     {
+                        "person_a": pid_a,
+                        "person_b": pid_b,
                         "distance": round(
-                            mate_dist,
+                            distance,
                             2,
                         ),
                     },
@@ -2346,63 +2895,89 @@ def run() -> int:
 
             if (
                 outputs.escape > 0.55
-                and escape_cooldown <= 0
+                and escape_cooldown
+                <= 0.0
             ):
                 escape_cooldown = 5.0
                 store.append_episode(
                     "escape",
                     0.8,
                     {
-                        "person": "male",
+                        "people": len(
+                            world.person_ids()
+                        ),
                     },
                 )
-                last_event_text = "逃逸"
 
-            if not sleeping:
-                next_sensors = world.sense()
+            for pid in (
+                world.person_ids()
+            ):
+                next_sensors = (
+                    world.sense(pid)
+                )
                 (
                     dopamine_signal,
                     pain_signal,
                     _,
                 ) = (
-                    world.consume_learning_signal()
+                    world.consume_learning_signal(
+                        pid
+                    )
                 )
                 learner.learn(
                     dopamine_signal,
                     pain_signal,
                     next_sensors,
-                    world.state.hunger,
+                    world.person_view(
+                        pid
+                    ).hunger,
+                    agent_id=pid,
                 )
-            else:
-                world.consume_learning_signal()
 
             update_learning_history()
             sync_learning_state()
 
             if (
-                time.monotonic() - last_save
+                time.monotonic()
+                - last_save
                 >= AUTOSAVE_SECONDS
             ):
-                save("autosave")
-                last_save = time.monotonic()
+                save(
+                    "autosave"
+                )
+                last_save = (
+                    time.monotonic()
+                )
 
             screen.fill(BG)
-            mouse_pos = pygame.mouse.get_pos()
+            mouse_pos = (
+                pygame.mouse.get_pos()
+            )
 
             hovered_person = None
             if (
-                mouse_pos[0] < ARENA_W
+                mouse_pos[0]
+                < ARENA_W
                 and not placing_item_id
             ):
-                hovered_person = _person_at(
-                    world,
-                    mouse_pos,
+                hovered_person = (
+                    _person_at(
+                        world,
+                        mouse_pos,
+                    )
+                )
+
+            if (
+                selected_person
+                not in world.people
+            ):
+                selected_person = (
+                    world.person_ids()[0]
                 )
 
             _draw_arena(
                 screen,
                 world,
-                outputs,
                 selected_person,
                 hovered_person,
                 placing_item_id,
@@ -2414,11 +2989,13 @@ def run() -> int:
                 screen,
                 world,
                 selected_person,
-                sleeping,
+                sleeping_ids,
                 simulation_speed,
                 speed_dragging,
-                prior_learning_updates
-                + learner.updates,
+                (
+                    prior_learning_updates
+                    + learner.updates
+                ),
                 learner.updates,
                 learning_recent(),
                 selected_item_id,
@@ -2440,7 +3017,9 @@ def run() -> int:
     finally:
         save("shutdown")
         try:
-            atexit.unregister(save)
+            atexit.unregister(
+                save
+            )
         except Exception:
             pass
         pygame.key.stop_text_input()
