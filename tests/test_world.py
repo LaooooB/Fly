@@ -182,3 +182,99 @@ def test_apply_motor_moves_person_and_advances_walk_phase():
         male.y - y0,
     ) > 1.0
     assert male.walk_phase > phase0
+
+
+def test_starvation_at_full_hunger_kills_after_sixty_simulated_seconds():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(20),
+    )
+    male = _person(world, "male")
+    male.hunger = 1.0
+
+    events = world.update_people(59.0)
+    assert male.alive is True
+    assert not any(e["kind"] == "died" for e in events)
+
+    events = world.update_people(1.1)
+    assert male.alive is False
+    assert any(
+        e["kind"] == "died"
+        and e["person_id"] == male.person_id
+        for e in events
+    )
+
+
+def test_eating_at_last_moment_resets_starvation_and_prevents_death():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(21),
+    )
+    male = _person(world, "male")
+    male.x = 220.0
+    male.y = 180.0
+    male.hunger = 1.0
+    male.starvation_seconds = 59.5
+    world.food = [(220.0, 180.0)]
+
+    events = world.update_people(0.6)
+
+    assert male.alive is True
+    assert male.starvation_seconds == 0.0
+    assert male.hunger < 1.0
+    assert any(e["kind"] == "ate_bread" for e in events)
+    assert not any(e["kind"] == "died" for e in events)
+
+
+def test_game_improves_mood_and_dopamine_without_feeding():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(22),
+    )
+    female = _person(world, "female")
+    female.x = 300.0
+    female.y = 240.0
+    female.hunger = 0.72
+    female.mood = 0.20
+    world.place_game(300.0, 240.0)
+
+    hunger_before = female.hunger
+    mood_before = female.mood
+    events = world.update_people(0.1)
+    dopamine, _, reasons = world.consume_learning_signal(
+        female.person_id
+    )
+
+    assert female.hunger >= hunger_before
+    assert female.mood > mood_before
+    assert female.games_played == 1
+    assert dopamine >= 1.0
+    assert "dopamine:played_game" in reasons
+    assert any(e["kind"] == "played_game" for e in events)
+
+
+def test_dead_person_cannot_move():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(23),
+    )
+    male = _person(world, "male")
+    male.alive = False
+    x0, y0 = male.x, male.y
+
+    bounced = world.apply_motor(
+        dt=1.0,
+        forward=1.0,
+        turn=0.0,
+        backward=0.0,
+        escape=0.0,
+        person_id=male.person_id,
+    )
+
+    assert bounced is False
+    assert male.x == x0
+    assert male.y == y0
