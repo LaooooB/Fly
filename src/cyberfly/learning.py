@@ -136,14 +136,37 @@ class FastValenceLearner:
         else:
             wall = "WB"
 
-        if hunger > 0.72:
+        if hunger > 0.95:
+            need = "H3"
+        elif hunger > 0.72:
             need = "H2"
         elif hunger > 0.40:
             need = "H1"
         else:
             need = "H0"
 
-        return f"{food}|{wall}|{need}"
+        base = f"{food}|{wall}|{need}"
+
+        game_strength = max(
+            getattr(sensors, "game_odor", 0.0),
+            getattr(sensors, "game_left", 0.0),
+            getattr(sensors, "game_right", 0.0),
+        )
+        if game_strength < 0.07:
+            return base
+
+        game_delta = (
+            getattr(sensors, "game_right", 0.0)
+            - getattr(sensors, "game_left", 0.0)
+        )
+        if game_delta > 0.06:
+            game = "GR"
+        elif game_delta < -0.06:
+            game = "GL"
+        else:
+            game = "GC"
+
+        return f"{base}|{game}"
 
     def _pick_action(self, state: str) -> int:
         q = self._q(state)
@@ -243,6 +266,7 @@ class FastValenceLearner:
         next_sensors: Sensors,
         hunger: float,
         agent_id: str = "default",
+        terminal: bool = False,
     ) -> float:
         trace = self._trace(agent_id)
 
@@ -255,7 +279,7 @@ class FastValenceLearner:
         valence = _clamp(
             float(dopamine)
             - float(pain),
-            -1.0,
+            -2.0,
             1.0,
         )
         if abs(valence) < 1e-6:
@@ -273,7 +297,11 @@ class FastValenceLearner:
         old = q[trace.last_action]
         target = (
             valence
-            + self.gamma * max(next_q)
+            if terminal
+            else (
+                valence
+                + self.gamma * max(next_q)
+            )
         )
         event_alpha = min(
             0.75,
@@ -288,7 +316,7 @@ class FastValenceLearner:
             old
             + event_alpha
             * (target - old),
-            -2.0,
+            -3.0,
             2.0,
         )
         self.updates += 1
