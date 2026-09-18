@@ -27,10 +27,21 @@ class PetSnapshot:
     learning_updates: int = 0
     policy_q: dict[str, list[float]] = field(default_factory=dict)
 
+    female_x: float = 675.0
+    female_y: float = 350.0
+    female_heading: float = 3.141592653589793
+    female_hunger: float = 0.28
+    female_fatigue: float = 0.18
+    female_social_drive: float = 0.35
+    female_age_seconds: float = 0.0
+    female_food_eaten: int = 0
+    female_dopamine: float = 0.0
+    female_pain: float = 0.0
+    female_reward_events: int = 0
+    female_pain_events: int = 0
+
 
 class MemoryStore:
-    """Persistent cyber-pet state and episodic event log."""
-
     def __init__(self, root: str | Path | None = None):
         if root is None:
             root = os.environ.get("FLY_PET_HOME", r"J:\FLY")
