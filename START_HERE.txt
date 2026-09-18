@@ -1,0 +1,16 @@
+MaleCNS CyberPet v0.1 - Windows
+
+1) Make sure drive J: exists.
+2) Double-click INSTALL_OFFICIAL_MALECNS.bat
+3) Wait until it says MaleCNS verification completed.
+4) Double-click RUN_FLY.bat
+5) Q / Esc / close window = save and quit.
+
+Persistent memory:
+J:\FLY\save\pet_state.json
+J:\FLY\save\memories.jsonl
+
+MaleCNS data/cache:
+J:\FLY\male_cns_data
+
+Chinese details: README_CN.md
