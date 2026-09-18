@@ -84,8 +84,8 @@ class MaleCNSBrain:
         self._add(inject, "food_r", (sensors.food_right + sensors.memory_food_right) * hunger_gain)
         self._add(inject, "mate_l", sensors.mate_left * social_gain)
         self._add(inject, "mate_r", sensors.mate_right * social_gain)
-        self._add(inject, "loom_l", sensors.loom_left * 0.95)
-        self._add(inject, "loom_r", sensors.loom_right * 0.95)
+        self._add(inject, "loom_l", sensors.loom_left * 1.20)
+        self._add(inject, "loom_r", sensors.loom_right * 1.20)
 
         # Modeled homeostatic drive: gentle current into real MaleCNS output populations.
         # This keeps the virtual animal active when the simplified world provides little sensory input.
@@ -97,7 +97,7 @@ class MaleCNSBrain:
         else:
             self._add(inject, "turn_r", wander)
         if sensors.mate_visual > 0.1 and self.groups["courtship"].size:
-            self._add(inject, "courtship", sensors.mate_visual * social_drive * 0.16)
+            self._add(inject, "courtship", sensors.mate_visual * social_drive * 0.24)
 
         fired = self.brain.step(inject=inject)
         fired_arr = np.asarray(fired, dtype=np.int64).reshape(-1)
@@ -115,7 +115,7 @@ class MaleCNSBrain:
             forward=_clamp(fwd * 25.0),
             turn=max(-1.0, min(1.0, (r - l) * 30.0)),
             backward=_clamp(back * 25.0),
-            escape=_clamp(esc * 35.0),
+            escape=_clamp(esc * 45.0),
             courtship=_clamp(court * 28.0),
             spike_count=int(fired_arr.size),
         )

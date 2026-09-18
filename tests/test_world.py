@@ -278,3 +278,120 @@ def test_dead_person_cannot_move():
     assert bounced is False
     assert male.x == x0
     assert male.y == y0
+
+
+def test_mate_sensor_targets_opposite_sex_only():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(40),
+    )
+    male_1 = _person(world, "male")
+    male_2_id = world.add_person("male")
+    male_2 = world.people[male_2_id]
+    female = _person(world, "female")
+
+    male_1.x = 200.0
+    male_1.y = 200.0
+    male_1.heading = 0.0
+    male_2.x = 215.0
+    male_2.y = 200.0
+    female.x = 260.0
+    female.y = 200.0
+    male_1.reproduction_drive = 1.0
+    male_1.hunger = 0.2
+    male_1.pain = 0.0
+
+    nearest = world._nearest_other(male_1)
+    sensors = world.sense(male_1.person_id)
+
+    assert nearest is not None
+    assert nearest.gender == "female"
+    assert sensors.mate_visual > 0.0
+
+
+def test_sex_gives_max_dopamine_and_reduces_reproduction_drive():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(41),
+    )
+    male = _person(world, "male")
+    female = _person(world, "female")
+
+    male.x = 300.0
+    male.y = 300.0
+    female.x = 320.0
+    female.y = 300.0
+
+    for person in (male, female):
+        person.hunger = 0.2
+        person.pain = 0.0
+        person.mood = 0.8
+        person.reproduction_drive = 1.0
+        person.sex_cooldown = 0.0
+
+    events = world.try_sex(
+        courtship_signal=1.0,
+        max_people=12,
+    )
+    male_signal, _, male_reasons = world.consume_learning_signal(
+        male.person_id
+    )
+    female_signal, _, female_reasons = world.consume_learning_signal(
+        female.person_id
+    )
+
+    assert any(e["kind"] == "sex" for e in events)
+    assert male.sex_events == 1
+    assert female.sex_events == 1
+    assert male.dopamine == 1.0
+    assert female.dopamine == 1.0
+    assert male_signal >= 1.5
+    assert female_signal >= 1.5
+    assert "dopamine:sex" in male_reasons
+    assert "dopamine:sex" in female_reasons
+    assert male.reproduction_drive < 0.4
+    assert female.reproduction_drive < 0.4
+
+
+def test_dead_people_do_not_count_as_population_or_block_spawn_checks():
+    world = CyberFlyWorld(
+        width=900,
+        height=700,
+        rng=random.Random(42),
+    )
+    male = _person(world, "male")
+    male.alive = False
+
+    assert male.person_id not in world.living_ids()
+    assert world.population_counts() == (0, 1)
+    assert world.living_count() == 1
+
+
+def test_collision_pain_is_strong():
+    world = CyberFlyWorld(
+        width=400,
+        height=300,
+        rng=random.Random(43),
+    )
+    male = _person(world, "male")
+    male.x = 378.0
+    male.y = 150.0
+    male.heading = 0.0
+
+    bounced = world.apply_motor(
+        dt=0.5,
+        forward=1.0,
+        turn=0.0,
+        backward=0.0,
+        escape=0.0,
+        person_id=male.person_id,
+    )
+    _, pain, reasons = world.consume_learning_signal(
+        male.person_id
+    )
+
+    assert bounced is True
+    assert pain >= 2.0
+    assert "pain:boundary_collision" in reasons

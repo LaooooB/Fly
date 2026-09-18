@@ -57,7 +57,7 @@ class FastValenceLearner:
             ):
                 continue
             self.q_table[key] = [
-                _clamp(v, -2.0, 2.0)
+                _clamp(v, -3.0, 2.0)
                 for v in values
             ]
 
@@ -146,6 +146,24 @@ class FastValenceLearner:
             need = "H0"
 
         base = f"{food}|{wall}|{need}"
+
+        mate_strength = max(
+            getattr(sensors, "mate_visual", 0.0),
+            getattr(sensors, "mate_left", 0.0),
+            getattr(sensors, "mate_right", 0.0),
+        )
+        if mate_strength >= 0.07:
+            mate_delta = (
+                getattr(sensors, "mate_right", 0.0)
+                - getattr(sensors, "mate_left", 0.0)
+            )
+            if mate_delta > 0.06:
+                mate = "MR"
+            elif mate_delta < -0.06:
+                mate = "ML"
+            else:
+                mate = "MC"
+            base = f"{base}|{mate}"
 
         game_strength = max(
             getattr(sensors, "game_odor", 0.0),

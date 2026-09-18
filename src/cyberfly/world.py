@@ -64,6 +64,10 @@ class PersonState:
     speed: float = 0.0
     last_food_distance: float | None = None
     game_cooldown: float = 0.0
+    reproduction_drive: float = 0.35
+    sex_events: int = 0
+    offspring_count: int = 0
+    sex_cooldown: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +89,9 @@ class PersonState:
             "games_played": int(self.games_played),
             "starvation_seconds": round(float(self.starvation_seconds), 4),
             "alive": bool(self.alive),
+            "reproduction_drive": round(float(self.reproduction_drive), 6),
+            "sex_events": int(self.sex_events),
+            "offspring_count": int(self.offspring_count),
         }
 
     @classmethod
@@ -230,6 +237,22 @@ class PersonState:
                     True,
                 )
             ),
+            reproduction_drive=_clamp(
+                float(
+                    raw.get(
+                        "reproduction_drive",
+                        0.35,
+                    )
+                )
+            ),
+            sex_events=max(
+                0,
+                int(raw.get("sex_events", 0)),
+            ),
+            offspring_count=max(
+                0,
+                int(raw.get("offspring_count", 0)),
+            ),
         )
 
 
@@ -255,6 +278,9 @@ class PersonView:
     starvation_seconds: float
     starvation_remaining: float
     alive: bool
+    reproduction_drive: float
+    sex_events: int
+    offspring_count: int
     walk_phase: float
     speed: float
 
@@ -471,6 +497,7 @@ class CyberFlyWorld:
                 )
                 >= 85.0
                 for p in self.people.values()
+                if p.alive
             ):
                 return x, y
 
@@ -536,13 +563,16 @@ class CyberFlyWorld:
     def population_counts(
         self,
     ) -> tuple[int, int]:
+        living = [
+            p
+            for p in self.people.values()
+            if p.alive
+        ]
         males = sum(
             p.gender == "male"
-            for p in self.people.values()
+            for p in living
         )
-        females = len(
-            self.people
-        ) - males
+        females = len(living) - males
         return males, females
 
     def _resolve_person_id(
@@ -640,6 +670,13 @@ class CyberFlyWorld:
                 - person.starvation_seconds,
             ),
             alive=person.alive,
+            reproduction_drive=(
+                person.reproduction_drive
+            ),
+            sex_events=person.sex_events,
+            offspring_count=(
+                person.offspring_count
+            ),
             walk_phase=(
                 person.walk_phase
             ),
@@ -860,6 +897,8 @@ class CyberFlyWorld:
                 other.person_id
                 != person.person_id
                 and other.alive
+                and other.gender
+                != person.gender
             )
         ]
         if not others:
@@ -926,16 +965,25 @@ class CyberFlyWorld:
                     other.y,
                 )
             )
+            survival_gate = _clamp(
+                1.0
+                - person.hunger * 0.78
+                - person.pain * 0.35,
+                0.05,
+                1.0,
+            )
+            attraction_gain = (
+                0.20
+                + 0.80
+                * person.reproduction_drive
+            )
             sensors.mate_visual = _clamp(
                 (
                     1.0
-                    - dist / 500.0
+                    - dist / 520.0
                 )
-                * (
-                    0.35
-                    + 0.65
-                    * person.social_drive
-                )
+                * attraction_gain
+                * survival_gate
             )
             sensors.mate_left = (
                 sensors.mate_visual
@@ -1310,6 +1358,14 @@ class CyberFlyWorld:
                 person.game_cooldown
                 - dt,
             )
+            person.sex_cooldown = max(
+                0.0,
+                person.sex_cooldown - dt,
+            )
+            person.reproduction_drive = _clamp(
+                person.reproduction_drive
+                + 0.0014 * dt
+            )
 
             if person.hunger >= 0.999:
                 person.starvation_seconds += dt
@@ -1414,6 +1470,34 @@ class CyberFlyWorld:
                     signal["reasons"].append(
                         "pain:starvation"
                     )
+
+            if (
+                person.reproduction_drive > 0.82
+                and person.hunger < 0.72
+                and person.pain < 0.45
+                and self._nearest_other(person)
+                is not None
+            ):
+                reproduction_pressure = (
+                    (
+                        person.reproduction_drive
+                        - 0.82
+                    )
+                    / 0.18
+                )
+                signal = self._signal(
+                    person.person_id
+                )
+                signal["pain"] = min(
+                    2.0,
+                    signal["pain"]
+                    + 0.10
+                    * reproduction_pressure
+                    * dt,
+                )
+                signal["reasons"].append(
+                    "pain:reproduction_pressure"
+                )
 
         for person in list(
             self.people.values()
@@ -1708,7 +1792,7 @@ class CyberFlyWorld:
             )
             self.pulse_pain(
                 pid,
-                1.0,
+                2.0,
                 "boundary_collision",
                 count_event=True,
             )
@@ -1746,6 +1830,159 @@ class CyberFlyWorld:
         )
         person.speed = 0.0
         self.sync_snapshot()
+
+    def try_sex(
+        self,
+        courtship_signal: float,
+        max_people: int = 12,
+    ) -> list[dict[str, Any]]:
+        if courtship_signal < 0.18:
+            return []
+
+        candidates: list[
+            tuple[float, PersonState, PersonState]
+        ] = []
+        people = [
+            p
+            for p in self.people.values()
+            if p.alive
+        ]
+
+        for i, a in enumerate(people):
+            if (
+                a.sex_cooldown > 0.0
+                or a.reproduction_drive < 0.45
+                or a.hunger > 0.88
+                or a.pain > 0.72
+            ):
+                continue
+            for b in people[i + 1:]:
+                if (
+                    a.gender == b.gender
+                    or b.sex_cooldown > 0.0
+                    or b.reproduction_drive < 0.45
+                    or b.hunger > 0.88
+                    or b.pain > 0.72
+                ):
+                    continue
+                distance = math.hypot(
+                    a.x - b.x,
+                    a.y - b.y,
+                )
+                if distance <= 42.0:
+                    candidates.append(
+                        (distance, a, b)
+                    )
+
+        if not candidates:
+            return []
+
+        candidates.sort(
+            key=lambda row: row[0]
+        )
+        _, a, b = candidates[0]
+
+        for person in (a, b):
+            person.sex_cooldown = 28.0
+            person.reproduction_drive = _clamp(
+                person.reproduction_drive
+                - 0.72
+            )
+            person.sex_events += 1
+            person.mood = _clamp(
+                person.mood + 0.55
+            )
+            person.fatigue = _clamp(
+                person.fatigue + 0.055
+            )
+            self.pulse_dopamine(
+                person.person_id,
+                1.5,
+                "sex",
+                count_event=True,
+            )
+
+        events: list[dict[str, Any]] = [
+            {
+                "kind": "sex",
+                "person_a": a.person_id,
+                "person_b": b.person_id,
+                "distance": math.hypot(
+                    a.x - b.x,
+                    a.y - b.y,
+                ),
+            }
+        ]
+
+        health = _clamp(
+            1.0
+            - (
+                a.hunger
+                + b.hunger
+                + a.fatigue
+                + b.fatigue
+            )
+            / 4.0
+        )
+        mood = (
+            a.mood + b.mood
+        ) * 0.5
+        fertility = _clamp(
+            0.15
+            + 0.55 * health
+            + 0.30 * mood
+        )
+
+        if (
+            self.living_count() < max_people
+            and self.rng.random()
+            < fertility * 0.45
+        ):
+            gender = (
+                "male"
+                if self.rng.random() < 0.5
+                else "female"
+            )
+            child_id = self.add_person(gender)
+            child = self.people[child_id]
+            child.x = _clamp(
+                (a.x + b.x) * 0.5
+                + self.rng.uniform(-22.0, 22.0),
+                30.0,
+                self.width - 30.0,
+            )
+            child.y = _clamp(
+                (a.y + b.y) * 0.5
+                + self.rng.uniform(-22.0, 22.0),
+                30.0,
+                self.height - 30.0,
+            )
+            child.hunger = 0.20
+            child.fatigue = 0.08
+            child.mood = 0.70
+            a.offspring_count += 1
+            b.offspring_count += 1
+
+            for person in (a, b):
+                self.pulse_dopamine(
+                    person.person_id,
+                    1.5,
+                    "reproduction_success",
+                    count_event=True,
+                )
+
+            events.append(
+                {
+                    "kind": "offspring",
+                    "child_id": child_id,
+                    "gender": gender,
+                    "parent_a": a.person_id,
+                    "parent_b": b.person_id,
+                }
+            )
+
+        self.sync_snapshot()
+        return events
 
     def closest_pair(
         self,
