@@ -20,6 +20,12 @@ class PetSnapshot:
     food_eaten: int = 0
     courtship_events: int = 0
     known_food_spots: list[list[float]] = field(default_factory=list)
+    dopamine: float = 0.0
+    pain: float = 0.0
+    reward_events: int = 0
+    pain_events: int = 0
+    learning_updates: int = 0
+    policy_q: dict[str, list[float]] = field(default_factory=dict)
 
 
 class MemoryStore:
