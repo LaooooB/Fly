@@ -4,27 +4,36 @@ from cyberfly.learning import ACTIONS, FastValenceLearner
 from cyberfly.world import CyberFlyWorld, Sensors
 
 
+def _male(world):
+    return world.people[
+        world._resolve_person_id("male")
+    ]
+
+
 def test_eating_bread_emits_dopamine():
     world = CyberFlyWorld(
-        width=400,
-        height=300,
+        width=900,
+        height=700,
         rng=random.Random(1),
     )
+    male = _male(world)
+    male.x = 200.0
+    male.y = 150.0
+    male.hunger = 0.9
     world.food = [(200.0, 150.0)]
-    world.state.x = 200.0
-    world.state.y = 150.0
-    world.state.hunger = 0.9
 
-    event = world.update_body(0.1)
+    events = world.update_people(0.1)
     dopamine, pain, reasons = (
-        world.consume_learning_signal()
+        world.consume_learning_signal(
+            male.person_id
+        )
     )
 
-    assert event == "male_ate"
+    assert events[0]["person_id"] == male.person_id
     assert dopamine >= 1.0
     assert pain >= 0.0
     assert "dopamine:ate_bread" in reasons
-    assert world.state.reward_events == 1
+    assert male.reward_events == 1
 
 
 def test_boundary_collision_emits_pain():
@@ -33,10 +42,10 @@ def test_boundary_collision_emits_pain():
         height=300,
         rng=random.Random(2),
     )
-    world.state.x = 382.0
-    world.state.y = 150.0
-    world.state.heading = 0.0
-    world.update_body(0.02)
+    male = _male(world)
+    male.x = 382.0
+    male.y = 150.0
+    male.heading = 0.0
 
     bounced = world.apply_motor(
         dt=0.5,
@@ -44,33 +53,39 @@ def test_boundary_collision_emits_pain():
         turn=0.0,
         backward=0.0,
         escape=0.0,
+        person_id=male.person_id,
     )
     _, pain, reasons = (
-        world.consume_learning_signal()
+        world.consume_learning_signal(
+            male.person_id
+        )
     )
 
     assert bounced is True
     assert pain >= 1.0
     assert "pain:boundary_collision" in reasons
-    assert world.state.pain_events == 1
+    assert male.pain_events == 1
 
 
 def test_hunger_emits_continuous_pain():
     world = CyberFlyWorld(
-        width=400,
-        height=300,
+        width=900,
+        height=700,
         rng=random.Random(3),
     )
-    world.state.hunger = 0.9
+    male = _male(world)
+    male.hunger = 0.9
 
-    world.update_body(0.5)
+    world.update_people(0.5)
     _, pain, reasons = (
-        world.consume_learning_signal()
+        world.consume_learning_signal(
+            male.person_id
+        )
     )
 
     assert pain > 0.0
     assert "pain:hunger" in reasons
-    assert world.state.pain > 0.5
+    assert male.pain > 0.5
 
 
 def test_dopamine_strengthens_selected_action():
@@ -166,3 +181,70 @@ def test_pain_weakens_selected_action():
 
     assert bias.action == "forward"
     assert after < before
+
+
+def test_two_people_train_one_shared_q_table_twice():
+    learner = FastValenceLearner(
+        rng=random.Random(6),
+        epsilon=0.0,
+    )
+    sensors = Sensors(
+        food_odor=0.8,
+        food_left=0.9,
+        food_right=0.1,
+    )
+    state = learner.state_key(
+        sensors,
+        hunger=0.8,
+    )
+    learner.q_table[state] = [
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+    ]
+
+    learner.choose_bias(
+        sensors,
+        hunger=0.8,
+        dt=1.0,
+        agent_id="male_1",
+    )
+    learner.choose_bias(
+        sensors,
+        hunger=0.8,
+        dt=1.0,
+        agent_id="female_1",
+    )
+
+    before = learner.q_table[
+        state
+    ][1]
+
+    learner.learn(
+        1.0,
+        0.0,
+        sensors,
+        hunger=0.8,
+        agent_id="male_1",
+    )
+    middle = learner.q_table[
+        state
+    ][1]
+
+    learner.learn(
+        1.0,
+        0.0,
+        sensors,
+        hunger=0.8,
+        agent_id="female_1",
+    )
+    after = learner.q_table[
+        state
+    ][1]
+
+    assert learner.updates == 2
+    assert middle > before
+    assert after > middle
+    assert learner.active_agents == 2

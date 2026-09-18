@@ -10,6 +10,13 @@ from typing import Any
 
 @dataclass(eq=True)
 class PetSnapshot:
+    # Shared learning/memory.
+    known_food_spots: list[list[float]] = field(default_factory=list)
+    learning_updates: int = 0
+    policy_q: dict[str, list[float]] = field(default_factory=dict)
+    people: list[dict[str, Any]] = field(default_factory=list)
+
+    # Legacy primary male fields. Kept for automatic migration of old saves.
     x: float = 550.0
     y: float = 350.0
     heading: float = 0.0
@@ -19,14 +26,12 @@ class PetSnapshot:
     age_seconds: float = 0.0
     food_eaten: int = 0
     courtship_events: int = 0
-    known_food_spots: list[list[float]] = field(default_factory=list)
     dopamine: float = 0.0
     pain: float = 0.0
     reward_events: int = 0
     pain_events: int = 0
-    learning_updates: int = 0
-    policy_q: dict[str, list[float]] = field(default_factory=dict)
 
+    # Legacy primary female fields. Kept for automatic migration of old saves.
     female_x: float = 675.0
     female_y: float = 350.0
     female_heading: float = 3.141592653589793
