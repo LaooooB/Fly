@@ -203,7 +203,7 @@ def command_is_complete(
         )
     if command.goal == "rest":
         return (
-            view.fatigue < 0.34
+            view.fatigue < 0.42
             and command.elapsed > 0.5
         )
     if command.goal == "avoid":
