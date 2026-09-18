@@ -2077,18 +2077,30 @@ def _draw_panel(
         ),
     )
 
-    command_caption = (
-        f"指令 · {command_label}"
-        if command_label
-        else "指令 · 当前人物"
-    )
+    if command_label:
+        command_caption = (
+            f"指令 · {command_label}"
+        )
+        command_caption_color = MUTED
+    elif last_event_text in {
+        "无法识别这条指令",
+        "没有可执行指令的人物",
+    }:
+        command_caption = last_event_text
+        command_caption_color = DANGER
+    else:
+        command_caption = (
+            "指令 · 默认当前人物"
+        )
+        command_caption_color = MUTED
+
     _text(
         screen,
         font_small,
         command_caption,
         x,
         666,
-        MUTED,
+        command_caption_color,
     )
 
     command_hover = (
