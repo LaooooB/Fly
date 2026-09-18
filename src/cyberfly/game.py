@@ -24,19 +24,28 @@ FPS = 60
 AUTOSAVE_SECONDS = 30.0
 
 PANEL_PAD = 18
+SIM_SPEED_MIN = 1.0
+SIM_SPEED_MAX = 8.0
+SIM_SPEED_STEP = 0.5
+SPEED_RECT = pygame.Rect(
+    ARENA_W + PANEL_PAD,
+    488,
+    PANEL_W - PANEL_PAD * 2,
+    52,
+)
 PICKER_RECT = pygame.Rect(
     ARENA_W + PANEL_PAD,
-    530,
+    568,
     PANEL_W - PANEL_PAD * 2,
     42,
 )
 PLACE_RECT = pygame.Rect(
     ARENA_W + PANEL_PAD,
-    582,
+    620,
     PANEL_W - PANEL_PAD * 2,
     44,
 )
-DROPDOWN_TOP = 576
+DROPDOWN_TOP = 614
 DROPDOWN_ROW_H = 42
 DROPDOWN_MAX = 3
 
@@ -65,6 +74,38 @@ def _clamp(
     hi: float = 1.0,
 ) -> float:
     return max(lo, min(hi, v))
+
+
+def _snap_simulation_speed(
+    value: float,
+) -> float:
+    value = max(
+        SIM_SPEED_MIN,
+        min(SIM_SPEED_MAX, float(value)),
+    )
+    steps = round(
+        (value - SIM_SPEED_MIN)
+        / SIM_SPEED_STEP
+    )
+    return (
+        SIM_SPEED_MIN
+        + steps * SIM_SPEED_STEP
+    )
+
+
+def _speed_from_mouse_x(
+    mouse_x: int,
+) -> float:
+    span = max(1, SPEED_RECT.w - 18)
+    ratio = _clamp(
+        (mouse_x - SPEED_RECT.x - 9)
+        / span,
+    )
+    return _snap_simulation_speed(
+        SIM_SPEED_MIN
+        + ratio
+        * (SIM_SPEED_MAX - SIM_SPEED_MIN)
+    )
 
 
 def _marker_path() -> Path:
@@ -175,6 +216,102 @@ def _meter(
             ),
             border_radius=4,
         )
+
+
+def _draw_speed_slider(
+    screen: pygame.Surface,
+    font: pygame.font.Font,
+    speed: float,
+    mouse_pos: tuple[int, int],
+    dragging: bool,
+) -> None:
+    hovered = SPEED_RECT.collidepoint(
+        mouse_pos
+    )
+    label = font.render(
+        "模拟速度",
+        True,
+        TEXT,
+    )
+    value = font.render(
+        f"{speed:g}×",
+        True,
+        ACCENT if dragging else TEXT,
+    )
+    screen.blit(
+        label,
+        (
+            SPEED_RECT.x,
+            SPEED_RECT.y,
+        ),
+    )
+    screen.blit(
+        value,
+        (
+            SPEED_RECT.right
+            - value.get_width(),
+            SPEED_RECT.y,
+        ),
+    )
+
+    track = pygame.Rect(
+        SPEED_RECT.x + 9,
+        SPEED_RECT.y + 31,
+        SPEED_RECT.w - 18,
+        7,
+    )
+    pygame.draw.rect(
+        screen,
+        (35, 46, 40),
+        track,
+        border_radius=4,
+    )
+
+    ratio = (
+        (speed - SIM_SPEED_MIN)
+        / (SIM_SPEED_MAX - SIM_SPEED_MIN)
+    )
+    knob_x = int(
+        track.x
+        + track.w * ratio
+    )
+    if knob_x > track.x:
+        pygame.draw.rect(
+            screen,
+            ACCENT,
+            (
+                track.x,
+                track.y,
+                knob_x - track.x,
+                track.h,
+            ),
+            border_radius=4,
+        )
+
+    knob_color = (
+        HOVER
+        if hovered or dragging
+        else ACCENT
+    )
+    pygame.draw.circle(
+        screen,
+        knob_color,
+        (
+            knob_x,
+            track.centery,
+        ),
+        9,
+    )
+    pygame.draw.circle(
+        screen,
+        (33, 67, 49),
+        (
+            knob_x,
+            track.centery,
+        ),
+        9,
+        2,
+    )
 
 
 def _person_hit_rect(
@@ -949,6 +1086,8 @@ def _draw_panel(
     world: CyberFlyWorld,
     selected_person: str,
     male_sleeping: bool,
+    simulation_speed: float,
+    speed_dragging: bool,
     total_learning: int,
     session_learning: int,
     recent_learning: int,
@@ -1193,12 +1332,20 @@ def _draw_panel(
         font,
     )
 
+    _draw_speed_slider(
+        screen,
+        font_small,
+        simulation_speed,
+        mouse_pos,
+        speed_dragging,
+    )
+
     _text(
         screen,
         font_small,
         "物品",
         x,
-        500,
+        548,
         MUTED,
     )
 
@@ -1345,9 +1492,9 @@ def _draw_panel(
 
     event_card = pygame.Rect(
         x,
-        644,
+        680,
         PANEL_W - PANEL_PAD * 2,
-        52,
+        44,
     )
     pygame.draw.rect(
         screen,
@@ -1537,6 +1684,8 @@ def run() -> int:
     dropdown_open = False
     search_active = False
     search_text = ""
+    simulation_speed = 1.0
+    speed_dragging = False
 
     learning_history: deque[
         tuple[float, int]
@@ -1685,9 +1834,13 @@ def run() -> int:
 
     try:
         while running:
-            dt = min(
+            real_dt = min(
                 clock.tick(FPS) / 1000.0,
                 0.08,
+            )
+            dt = min(
+                real_dt * simulation_speed,
+                0.20,
             )
 
             for event in pygame.event.get():
@@ -1745,6 +1898,26 @@ def run() -> int:
 
                 if (
                     event.type
+                    == pygame.MOUSEMOTION
+                    and speed_dragging
+                ):
+                    simulation_speed = (
+                        _speed_from_mouse_x(
+                            event.pos[0]
+                        )
+                    )
+                    continue
+
+                if (
+                    event.type
+                    == pygame.MOUSEBUTTONUP
+                    and event.button == 1
+                ):
+                    speed_dragging = False
+                    continue
+
+                if (
+                    event.type
                     == pygame.MOUSEBUTTONDOWN
                 ):
                     mx, my = event.pos
@@ -1760,6 +1933,21 @@ def run() -> int:
                         continue
 
                     if event.button != 1:
+                        continue
+
+                    if SPEED_RECT.collidepoint(
+                        event.pos
+                    ):
+                        speed_dragging = True
+                        simulation_speed = (
+                            _speed_from_mouse_x(
+                                mx
+                            )
+                        )
+                        last_event_text = (
+                            f"模拟速度 "
+                            f"{simulation_speed:g}×"
+                        )
                         continue
 
                     if PICKER_RECT.collidepoint(
@@ -1977,9 +2165,21 @@ def run() -> int:
                 )
             )
             steps = 0
+            max_neural_steps = min(
+                16,
+                max(
+                    3,
+                    int(
+                        math.ceil(
+                            dt / neural_dt
+                        )
+                    )
+                    + 2,
+                ),
+            )
             while (
                 brain_acc >= neural_dt
-                and steps < 3
+                and steps < max_neural_steps
             ):
                 outputs = brain.step(
                     sensors,
@@ -1991,6 +2191,13 @@ def run() -> int:
                 )
                 brain_acc -= neural_dt
                 steps += 1
+
+            if (
+                steps >= max_neural_steps
+                and brain_acc
+                > neural_dt * 4.0
+            ):
+                brain_acc = neural_dt * 4.0
 
             if (
                 world.state.fatigue > 0.88
@@ -2208,6 +2415,8 @@ def run() -> int:
                 world,
                 selected_person,
                 sleeping,
+                simulation_speed,
+                speed_dragging,
                 prior_learning_updates
                 + learner.updates,
                 learner.updates,
